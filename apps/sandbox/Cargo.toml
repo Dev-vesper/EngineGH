@@ -1,0 +1,12 @@
+[package]
+name = "sandbox"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+glam.workspace = true
+engine_platform.workspace = true
+engine_camera.workspace = true
+engine_render.workspace = true
+env_logger.workspace = true
+log.workspace = true

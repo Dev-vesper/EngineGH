@@ -1,0 +1,12 @@
+[package]
+name = "engine_render"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+glam.workspace = true
+wgpu.workspace = true
+raw-window-handle.workspace = true
+bytemuck.workspace = true
+pollster.workspace = true
+log.workspace = true
