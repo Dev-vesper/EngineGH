@@ -5,18 +5,18 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 #[derive(Debug)]
 pub enum GpuError {
     Surface(wgpu::CreateSurfaceError),
-    Adapter(wgpu::RequestAdapterError),
     Device(wgpu::RequestDeviceError),
     NoSurfaceFormat,
+    NoAdapter,
 }
 
 impl fmt::Display for GpuError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Surface(e) => write!(f, "surface creation failed: {e}"),
-            Self::Adapter(e) => write!(f, "no suitable GPU adapter: {e}"),
             Self::Device(e) => write!(f, "device request failed: {e}"),
             Self::NoSurfaceFormat => write!(f, "surface reports no supported formats"),
+            Self::NoAdapter => write!(f, "no adapter can present to this surface"),
         }
     }
 }
@@ -33,22 +33,24 @@ pub struct GpuContext {
 impl GpuContext {
     pub fn new<W>(window: W, size: (u32, u32)) -> Result<Self, GpuError>
     where
-        W: HasWindowHandle + HasDisplayHandle + Send + Sync + 'static,
+        W: HasWindowHandle + HasDisplayHandle + Clone + std::fmt::Debug + Send + Sync + 'static,
     {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        // Honours WGPU_BACKEND (vulkan | gl | ...) and related env vars; the display handle is
+        // required by the GL (EGL) backend.
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(
+            window.clone(),
+        )));
         let surface = instance.create_surface(window).map_err(GpuError::Surface)?;
 
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-            apply_limit_buckets: false,
-        }))
-        .map_err(GpuError::Adapter)?;
+        let adapter = select_adapter(&instance, &surface)?;
         log::info!("adapter: {:?}", adapter.get_info());
 
+        // Downlevel baseline (GLES 3.0 class) raised to whatever the adapter really offers,
+        // so older GPUs / the GL backend are not rejected for limits the engine never uses.
+        let required_limits = wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits());
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("engine device"),
+            required_limits,
             ..Default::default()
         }))
         .map_err(GpuError::Device)?;
@@ -91,4 +93,31 @@ impl GpuContext {
     pub fn size(&self) -> (u32, u32) {
         (self.config.width, self.config.height)
     }
+}
+
+/// Lower is better. A CPU rasteriser (llvmpipe) is only used when nothing else can present.
+fn adapter_rank(ty: wgpu::DeviceType) -> u8 {
+    match ty {
+        wgpu::DeviceType::DiscreteGpu => 0,
+        wgpu::DeviceType::IntegratedGpu => 1,
+        wgpu::DeviceType::VirtualGpu => 2,
+        wgpu::DeviceType::Other => 3,
+        wgpu::DeviceType::Cpu => 4,
+    }
+}
+
+/// Enumerates every backend the instance allows (Vulkan, GL, ...), keeps adapters that can
+/// present to `surface`, and picks the best hardware one. Without this, a machine whose GPU has
+/// no Vulkan driver silently ends up on the software Vulkan device.
+fn select_adapter(instance: &wgpu::Instance, surface: &wgpu::Surface<'_>) -> Result<wgpu::Adapter, GpuError> {
+    let mut adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
+    adapters.retain(|a| a.is_surface_supported(surface));
+    for a in &adapters {
+        let i = a.get_info();
+        log::info!("candidate adapter: {} ({:?}, {:?})", i.name, i.device_type, i.backend);
+    }
+    adapters
+        .into_iter()
+        .min_by_key(|a| adapter_rank(a.get_info().device_type))
+        .ok_or(GpuError::NoAdapter)
 }

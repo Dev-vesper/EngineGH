@@ -46,7 +46,7 @@ pub struct Renderer {
 impl Renderer {
     pub fn new<W>(window: W, size: (u32, u32)) -> Result<Self, GpuError>
     where
-        W: HasWindowHandle + HasDisplayHandle + Send + Sync + 'static,
+        W: HasWindowHandle + HasDisplayHandle + Clone + std::fmt::Debug + Send + Sync + 'static,
     {
         let gpu = GpuContext::new(window, size)?;
         let device = &gpu.device;
