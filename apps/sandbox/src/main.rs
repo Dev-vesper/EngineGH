@@ -1,19 +1,24 @@
 use std::sync::Arc;
 
 use engine_camera::FlyCamera;
-use engine_platform::{run, App, Input, Key, PlatformWindow, WindowConfig};
-use engine_render::{Frame, Instance, Renderer};
+use engine_platform::{run, App, Input, Key, PlatformWindow, WindowConfig, WindowEvent, WindowId};
+use engine_render::{Environment, Frame, Instance, Renderer};
 use glam::{Mat4, Quat, Vec3, Vec4};
 
-/// Linear-space sky / fog colour.
-const SKY: Vec3 = Vec3::new(0.02, 0.04, 0.09);
-const FOG_DENSITY: f32 = 0.012;
-const LIGHT_DIR: Vec3 = Vec3::new(0.4, 0.9, 0.3);
+#[cfg(feature = "editor")]
+use engine_editor::{Editor, InspectorData};
+
+#[cfg(feature = "editor")]
+#[global_allocator]
+static ALLOCATOR: engine_editor::TrackingAllocator = engine_editor::TrackingAllocator;
 
 struct Sandbox {
     renderer: Option<Renderer>,
     camera: FlyCamera,
+    env: Environment,
     instances: Vec<Instance>,
+    #[cfg(feature = "editor")]
+    editor: Option<Editor>,
 }
 
 impl Sandbox {
@@ -21,7 +26,10 @@ impl Sandbox {
         Self {
             renderer: None,
             camera: FlyCamera::new(Vec3::new(0.0, 5.0, 20.0), 0.0, -0.2),
+            env: Environment::default(),
             instances: build_scene(),
+            #[cfg(feature = "editor")]
+            editor: None,
         }
     }
 }
@@ -63,10 +71,37 @@ fn build_scene() -> Vec<Instance> {
 impl App for Sandbox {
     fn init(&mut self, window: Arc<PlatformWindow>) {
         let size = window.inner_size();
-        match Renderer::new(window, (size.width, size.height)) {
-            Ok(r) => self.renderer = Some(r),
-            Err(e) => log::error!("renderer init failed: {e}"),
+        #[cfg(feature = "editor")]
+        let editor_window = window.clone();
+        let renderer = match Renderer::new(window, (size.width, size.height)) {
+            Ok(r) => r,
+            Err(e) => {
+                log::error!("renderer init failed: {e}");
+                return;
+            }
+        };
+        #[cfg(feature = "editor")]
+        {
+            self.editor = Editor::new(
+                editor_window,
+                renderer.device().clone(),
+                renderer.queue().clone(),
+                renderer.surface_format(),
+                renderer.adapter_info(),
+            )
+            .map_err(|e| log::error!("{e}"))
+            .ok();
         }
+        self.renderer = Some(renderer);
+    }
+
+    fn window_event(&mut self, id: WindowId, event: &WindowEvent) -> bool {
+        #[cfg(feature = "editor")]
+        if let Some(editor) = self.editor.as_mut() {
+            return editor.handle_event(id, event);
+        }
+        let _ = (id, event);
+        false
     }
 
     fn resize(&mut self, size: engine_platform::PhysicalSize<u32>) {
@@ -76,6 +111,10 @@ impl App for Sandbox {
     }
 
     fn update(&mut self, dt: f32, input: &Input) {
+        #[cfg(feature = "editor")]
+        if let Some(editor) = self.editor.as_mut() {
+            editor.update_stats(dt);
+        }
         if input.cursor_grabbed() {
             self.camera.look(input.mouse_delta());
         }
@@ -93,11 +132,20 @@ impl App for Sandbox {
         let frame = Frame {
             view_proj: self.camera.view_proj(r.aspect()),
             eye: self.camera.position,
-            light_dir: LIGHT_DIR,
-            sky: SKY,
-            fog_density: FOG_DENSITY,
+            env: self.env,
             instances: &self.instances,
         };
+
+        #[cfg(feature = "editor")]
+        if let Some(editor) = self.editor.as_mut() {
+            let mut data = InspectorData {
+                camera: &mut self.camera,
+                env: &mut self.env,
+                instance_count: self.instances.len(),
+            };
+            r.render_with_overlay(&frame, Some(&mut |pass, extent| editor.draw(&mut data, pass, extent)));
+            return;
+        }
         r.render(&frame);
     }
 }

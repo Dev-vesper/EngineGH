@@ -7,14 +7,16 @@ use std::time::Instant;
 
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, WindowEvent};
+use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{CursorGrabMode, Window, WindowId};
+use winit::window::{CursorGrabMode, Window};
 
 pub use input::Input;
 pub use winit::keyboard::KeyCode as Key;
 pub use winit::dpi::PhysicalSize;
+pub use winit::event::WindowEvent;
+pub use winit::window::WindowId;
 pub use winit::window::Window as PlatformWindow;
 
 /// Upper bound on a single frame delta, so a stall (drag, breakpoint) does not teleport the camera.
@@ -39,6 +41,14 @@ pub trait App {
     fn resize(&mut self, size: PhysicalSize<u32>);
     fn update(&mut self, dt: f32, input: &Input);
     fn render(&mut self);
+
+    /// Sees every window event first (e.g. a GUI layer). Return `true` if the event is captured
+    /// by the UI: *press* events (key / mouse button) that are captured never reach `Input` and
+    /// never start a mouse grab. Releases are always delivered so no key can stay stuck down.
+    /// The return value is ignored while the cursor is grabbed.
+    fn window_event(&mut self, _id: WindowId, _event: &WindowEvent) -> bool {
+        false
+    }
 }
 
 pub fn run<A: App>(config: WindowConfig, app: A) -> Result<(), winit::error::EventLoopError> {
@@ -102,7 +112,8 @@ impl<A: App> ApplicationHandler for Runner<A> {
         self.last_frame = Instant::now();
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        let captured = self.app.window_event(id, &event) && !self.input.cursor_grabbed();
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => self.app.resize(size),
@@ -111,13 +122,16 @@ impl<A: App> ApplicationHandler for Runner<A> {
                 self.set_grab(false);
             }
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. }
-                if !self.input.cursor_grabbed() =>
+                if !captured && !self.input.cursor_grabbed() =>
             {
                 self.set_grab(true);
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {
                     let pressed = event.state == ElementState::Pressed;
+                    if pressed && captured {
+                        return;
+                    }
                     if pressed && code == KeyCode::Escape {
                         if self.input.cursor_grabbed() {
                             self.set_grab(false);

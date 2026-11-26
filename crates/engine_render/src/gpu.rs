@@ -28,6 +28,7 @@ pub struct GpuContext {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
+    pub adapter_info: wgpu::AdapterInfo,
 }
 
 impl GpuContext {
@@ -77,7 +78,8 @@ impl GpuContext {
         };
         surface.configure(&device, &config);
 
-        Ok(Self { surface, device, queue, config })
+        let adapter_info = adapter.get_info();
+        Ok(Self { surface, device, queue, config, adapter_info })
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {

@@ -18,17 +18,33 @@ struct CameraUniform {
     fog: Vec4,
 }
 
-/// Everything the renderer needs for one frame.
-pub struct Frame<'a> {
-    pub view_proj: Mat4,
-    pub eye: Vec3,
+/// Scene-wide lighting and atmosphere.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Environment {
     /// Direction TOWARDS the light (need not be normalised).
     pub light_dir: Vec3,
     /// Linear RGB. Used as clear colour and fog colour.
     pub sky: Vec3,
     pub fog_density: f32,
+}
+
+impl Default for Environment {
+    fn default() -> Self {
+        Self { light_dir: Vec3::new(0.4, 0.9, 0.3), sky: Vec3::new(0.02, 0.04, 0.09), fog_density: 0.012 }
+    }
+}
+
+/// Everything the renderer needs for one frame.
+pub struct Frame<'a> {
+    pub view_proj: Mat4,
+    pub eye: Vec3,
+    pub env: Environment,
     pub instances: &'a [Instance],
 }
+
+/// Records extra draw commands (e.g. a GUI) into a pass over the final, resolved surface image.
+/// Receives the pass and the physical size of the surface texture.
+pub type OverlayFn<'f> = &'f mut dyn FnMut(&mut wgpu::RenderPass<'_>, (u32, u32));
 
 pub struct Renderer {
     gpu: GpuContext,
@@ -184,7 +200,33 @@ impl Renderer {
         w as f32 / h as f32
     }
 
+    #[inline]
+    pub fn device(&self) -> &wgpu::Device {
+        &self.gpu.device
+    }
+
+    #[inline]
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.gpu.queue
+    }
+
+    #[inline]
+    pub fn surface_format(&self) -> wgpu::TextureFormat {
+        self.gpu.config.format
+    }
+
+    #[inline]
+    pub fn adapter_info(&self) -> &wgpu::AdapterInfo {
+        &self.gpu.adapter_info
+    }
+
     pub fn render(&mut self, frame: &Frame<'_>) {
+        self.render_with_overlay(frame, None);
+    }
+
+    /// Like [`Renderer::render`], then runs `overlay` in a second pass (no depth, 1 sample)
+    /// that loads the already-resolved surface image.
+    pub fn render_with_overlay(&mut self, frame: &Frame<'_>, overlay: Option<OverlayFn<'_>>) {
         let surface_texture = match self.gpu.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
@@ -201,12 +243,12 @@ impl Renderer {
         };
         let resolve_view = surface_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let light = frame.light_dir.normalize_or_zero();
+        let env = &frame.env;
         let uniform = CameraUniform {
             view_proj: frame.view_proj,
             eye: frame.eye.extend(1.0),
-            light_dir: light.extend(0.0),
-            fog: frame.sky.extend(frame.fog_density),
+            light_dir: env.light_dir.normalize_or_zero().extend(0.0),
+            fog: env.sky.extend(env.fog_density),
         };
         self.gpu.queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
         self.instances.write(&self.gpu.device, &self.gpu.queue, bytemuck::cast_slice(frame.instances));
@@ -224,9 +266,9 @@ impl Renderer {
                     resolve_target: Some(&resolve_view),
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: frame.sky.x as f64,
-                            g: frame.sky.y as f64,
-                            b: frame.sky.z as f64,
+                            r: env.sky.x as f64,
+                            g: env.sky.y as f64,
+                            b: env.sky.z as f64,
                             a: 1.0,
                         }),
                         // MSAA contents are only needed for the resolve.
@@ -259,6 +301,25 @@ impl Renderer {
             pass.set_pipeline(&self.line_pipeline);
             pass.set_vertex_buffer(0, self.grid_buffer.slice(..));
             pass.draw(0..self.grid_vertex_count, 0..1);
+        }
+        if let Some(overlay) = overlay {
+            let extent = (surface_texture.texture.width(), surface_texture.texture.height());
+            let mut pass = encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("overlay pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &resolve_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                })
+                .forget_lifetime();
+            overlay(&mut pass, extent);
         }
         self.gpu.queue.submit(Some(encoder.finish()));
         self.gpu.queue.present(surface_texture);

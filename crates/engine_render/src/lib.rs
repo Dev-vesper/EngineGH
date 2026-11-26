@@ -9,4 +9,5 @@ mod targets;
 
 pub use gpu::{GpuContext, GpuError};
 pub use instance::Instance;
-pub use renderer::{Frame, Renderer};
+pub use renderer::{Environment, Frame, OverlayFn, Renderer};
+pub use wgpu;
