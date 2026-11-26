@@ -34,6 +34,8 @@ pub struct GpuContext {
     pub adapter_info: wgpu::AdapterInfo,
     /// Effective MSAA sample count (may be lower than requested).
     pub sample_count: u32,
+    pub vsync: bool,
+    adapter: wgpu::Adapter,
 }
 
 impl GpuContext {
@@ -89,7 +91,7 @@ impl GpuContext {
 
         let sample_count = resolve_sample_count(&adapter, format, settings.msaa_samples);
         let adapter_info = adapter.get_info();
-        Ok(Self { surface, device, queue, config, adapter_info, sample_count })
+        Ok(Self { surface, device, queue, config, adapter_info, sample_count, vsync: settings.vsync, adapter })
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -105,6 +107,35 @@ impl GpuContext {
     pub fn size(&self) -> (u32, u32) {
         (self.config.width, self.config.height)
     }
+
+    pub fn set_vsync(&mut self, vsync: bool) {
+        self.vsync = vsync;
+        self.config.present_mode =
+            if vsync { wgpu::PresentMode::AutoVsync } else { wgpu::PresentMode::AutoNoVsync };
+        self.surface.configure(&self.device, &self.config);
+    }
+
+    /// Stores the effective count for `requested` (see `resolve_sample_count`) and returns it.
+    /// The caller must rebuild everything that depends on the sample count.
+    pub fn set_sample_count(&mut self, requested: u32) -> u32 {
+        self.sample_count = resolve_sample_count(&self.adapter, self.config.format, requested);
+        self.sample_count
+    }
+
+    /// Support flags for `SAMPLE_COUNTS` (1, 2, 4, 8), for both colour and depth.
+    pub fn supported_sample_counts(&self) -> [bool; 4] {
+        SAMPLE_COUNTS.map(|n| supports_samples(&self.adapter, self.config.format, n))
+    }
+}
+
+/// MSAA sample counts the renderer can be asked for.
+pub const SAMPLE_COUNTS: [u32; 4] = [1, 2, 4, 8];
+
+fn supports_samples(adapter: &wgpu::Adapter, color: wgpu::TextureFormat, n: u32) -> bool {
+    n == 1
+        || [color, DEPTH_FORMAT]
+            .into_iter()
+            .all(|f| adapter.get_texture_format_features(f).flags.sample_count_supported(n))
 }
 
 /// Lower is better. A CPU rasteriser (llvmpipe) is only used when nothing else can present.
@@ -136,9 +167,8 @@ fn select_adapter(instance: &wgpu::Instance, surface: &wgpu::Surface<'_>) -> Res
 
 /// Largest supported sample count not above `requested` for both colour and depth, else 1.
 fn resolve_sample_count(adapter: &wgpu::Adapter, color: wgpu::TextureFormat, requested: u32) -> u32 {
-    let supports = |format, n| adapter.get_texture_format_features(format).flags.sample_count_supported(n);
     let mut n = requested.max(1);
-    while n > 1 && !(supports(color, n) && supports(DEPTH_FORMAT, n)) {
+    while n > 1 && !supports_samples(adapter, color, n) {
         n /= 2;
     }
     if n != requested {

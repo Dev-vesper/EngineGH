@@ -12,7 +12,7 @@ use engine_render::{Environment, Frame, Renderer, RendererConfig};
 use glam::Vec3;
 
 #[cfg(feature = "editor")]
-use engine_editor::{Editor, InspectorData};
+use engine_editor::{Editor, EditorOutput, InspectorData};
 
 use crate::report::{AdapterReport, ChildOutput, EnvironmentReport, MemoryReport, Measurements, ScenarioSpec};
 use crate::scenario::{self, Scene};
@@ -40,6 +40,8 @@ pub struct BenchApp {
     rendered: u32,
     skipped: u32,
     prev_start: Option<Instant>,
+    /// Memory snapshot taken when warm-up ends.
+    mem_start: Option<MemoryStats>,
     frame_ms: Vec<f64>,
     render_ms: Vec<f64>,
     started: Instant,
@@ -63,6 +65,7 @@ impl BenchApp {
             rendered: 0,
             skipped: 0,
             prev_start: None,
+            mem_start: None,
             // Pre-sized so the measurement loop never allocates.
             frame_ms: Vec::with_capacity(frames as usize),
             render_ms: Vec::with_capacity(frames as usize),
@@ -97,6 +100,8 @@ impl BenchApp {
 
         let duration_s = self.frame_ms.iter().sum::<f64>() / 1000.0;
         let mem = MemoryStats::now();
+        let start = self.mem_start.unwrap_or(mem);
+        let measured = self.frame_ms.len().max(1) as f64;
         let measurements = Measurements {
             effective_msaa_samples: r.sample_count(),
             warmup_frames: self.warmup,
@@ -113,6 +118,10 @@ impl BenchApp {
                 alloc_count: mem.alloc_count,
                 rss_end_bytes: mem.rss_bytes,
                 rss_peak_bytes: peak_resident_bytes(),
+                heap_start_bytes: start.heap_bytes,
+                heap_growth_bytes: mem.heap_bytes as i64 - start.heap_bytes as i64,
+                allocs_per_frame: (mem.alloc_count - start.alloc_count) as f64 / measured,
+                rss_growth_bytes: mem.rss_bytes.zip(start.rss_bytes).map(|(e, s)| e as i64 - s as i64),
             },
         };
         *self.outcome.borrow_mut() = Some(Ok(ChildOutput { environment, measurements }));
@@ -174,6 +183,8 @@ impl App for BenchApp {
             ));
         }
         let Some(r) = self.renderer.as_mut() else { return };
+        #[cfg(feature = "editor")]
+        let status = r.status();
 
         let (pos, yaw, pitch) = scenario::camera_pose(self.rendered, self.scene.extent);
         self.camera.position = pos;
@@ -193,9 +204,12 @@ impl App for BenchApp {
             let mut data = InspectorData {
                 camera: &mut self.camera,
                 env: &mut self.env,
-                instance_count: self.scene.instances.len(),
+                instances: &self.scene.instances,
+                render: status,
             };
-            r.render_with_overlay(&frame, Some(&mut |pass, extent| editor.draw(&mut data, pass, extent)))
+            // The benchmark scene is fixed: UI requests are discarded.
+            let mut out = EditorOutput::default();
+            r.render_with_overlay(&frame, Some(&mut |pass, extent| editor.draw(&mut data, &mut out, pass, extent)))
         } else {
             r.render(&frame)
         };
@@ -215,6 +229,10 @@ impl App for BenchApp {
             }
         }
         self.prev_start = Some(t0);
+        if self.rendered == self.warmup {
+            // Warm-up done: pools, caches and the sample vectors are all allocated by now.
+            self.mem_start = Some(MemoryStats::now());
+        }
         self.rendered += 1;
 
         if self.frame_ms.len() as u32 >= self.frames {

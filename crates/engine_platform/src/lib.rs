@@ -42,11 +42,12 @@ pub trait App {
     fn update(&mut self, dt: f32, input: &Input);
     fn render(&mut self);
 
-    /// Sees every window event first (e.g. a GUI layer). Return `true` if the event is captured
-    /// by the UI: *press* events (key / mouse button) that are captured never reach `Input` and
-    /// never start a mouse grab. Releases are always delivered so no key can stay stuck down.
-    /// The return value is ignored while the cursor is grabbed.
-    fn window_event(&mut self, _id: WindowId, _event: &WindowEvent) -> bool {
+    /// Sees every window event first (e.g. a GUI layer). `cursor_grabbed` tells whether the mouse
+    /// is currently captured by the game view (hidden/locked): a GUI must then ignore pointer and
+    /// key presses. Return `true` if the event is captured by the UI: *press* events (key / mouse
+    /// button) that are captured never reach `Input` and never start a mouse grab. Releases are
+    /// always delivered so no key can stay stuck down. The return value is ignored while grabbed.
+    fn window_event(&mut self, _id: WindowId, _event: &WindowEvent, _cursor_grabbed: bool) -> bool {
         false
     }
 
@@ -86,9 +87,11 @@ impl<A: App> Runner<A> {
                 .set_cursor_grab(CursorGrabMode::Locked)
                 .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined))
                 .is_ok();
+            log::debug!("cursor grab {}", if ok { "acquired" } else { "failed" });
             window.set_cursor_visible(!ok);
             self.input.set_cursor_grabbed(ok);
         } else {
+            log::debug!("cursor grab released");
             let _ = window.set_cursor_grab(CursorGrabMode::None);
             window.set_cursor_visible(true);
             self.input.set_cursor_grabbed(false);
@@ -118,7 +121,8 @@ impl<A: App> ApplicationHandler for Runner<A> {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
-        let captured = self.app.window_event(id, &event) && !self.input.cursor_grabbed();
+        let grabbed = self.input.cursor_grabbed();
+        let captured = self.app.window_event(id, &event, grabbed) && !grabbed;
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => self.app.resize(size),

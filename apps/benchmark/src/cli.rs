@@ -10,7 +10,7 @@ USAGE:
     benchmark [OPTIONS]
 
 OPTIONS (comma-separated lists produce the full cross product, one process per scenario):
-    --instances <N,..>   cube counts                 [default: 1000,10000,50000]
+    --instances <N,..>   cube counts                 [default: 10000,50000,200000]
     --msaa <1|2|4|8,..>  requested MSAA samples      [default: 1,4]
     --vsync <on|off,..>                              [default: off]
     --gui <on|off,..>    Dear ImGui overlay (needs --features editor)  [default: off]
@@ -19,7 +19,9 @@ OPTIONS (comma-separated lists produce the full cross product, one process per s
     --out <PATH>         report path [default: benchmarks/results/bench-<unix-time>.json]
     -h, --help
 
-Run with --release; debug numbers are not meaningful.";
+Run with --release; debug numbers are not meaningful.
+If several results sit at your monitor's refresh rate, those runs are display-bound:
+use larger --instances so the GPU, not the display, is the limit.";
 
 #[derive(Clone, Debug)]
 pub struct Matrix {
@@ -35,7 +37,7 @@ pub struct Matrix {
 impl Default for Matrix {
     fn default() -> Self {
         Self {
-            instances: vec![1_000, 10_000, 50_000],
+            instances: vec![10_000, 50_000, 200_000],
             msaa: vec![1, 4],
             vsync: vec![false],
             gui: vec![false],

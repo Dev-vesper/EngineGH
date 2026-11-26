@@ -4,11 +4,12 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use wgpu::util::DeviceExt;
 
 use crate::gpu::{GpuContext, GpuError};
-use crate::grid::{build_grid, LineVertex};
+use crate::grid::build_grid;
 use crate::instance::{DynamicBuffer, Instance};
-use crate::mesh::{unit_cube, GpuMesh, MeshVertex};
+use crate::mesh::{unit_cube, GpuMesh};
+use crate::pipelines::Pipelines;
 use crate::config::RendererConfig;
-use crate::targets::{RenderTargets, DEPTH_FORMAT};
+use crate::targets::RenderTargets;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -43,6 +44,17 @@ pub struct Frame<'a> {
     pub instances: &'a [Instance],
 }
 
+/// Snapshot of renderer settings for UIs. `Copy`, so it can be taken before a frame is rendered.
+#[derive(Clone, Copy, Debug)]
+pub struct RenderStatus {
+    pub vsync: bool,
+    /// Effective MSAA samples.
+    pub sample_count: u32,
+    /// Support flags for `SAMPLE_COUNTS` (1, 2, 4, 8).
+    pub supported_sample_counts: [bool; 4],
+    pub size: (u32, u32),
+}
+
 /// Records extra draw commands (e.g. a GUI) into a pass over the final, resolved surface image.
 /// Receives the pass and the physical size of the surface texture.
 pub type OverlayFn<'f> = &'f mut dyn FnMut(&mut wgpu::RenderPass<'_>, (u32, u32));
@@ -52,8 +64,8 @@ pub struct Renderer {
     targets: RenderTargets,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
-    mesh_pipeline: wgpu::RenderPipeline,
-    line_pipeline: wgpu::RenderPipeline,
+    camera_layout: wgpu::BindGroupLayout,
+    pipelines: Pipelines,
     cube: GpuMesh,
     grid_buffer: wgpu::Buffer,
     grid_vertex_count: u32,
@@ -95,72 +107,7 @@ impl Renderer {
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: camera_buffer.as_entire_binding() }],
         });
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("scene"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/scene.wgsl").into()),
-        });
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("scene layout"),
-            bind_group_layouts: &[Some(&camera_layout)],
-            immediate_size: 0,
-        });
-
-        let make_pipeline = |label: &str,
-                             vs: &str,
-                             fs: &str,
-                             buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
-                             topology: wgpu::PrimitiveTopology,
-                             cull: Option<wgpu::Face>| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some(vs),
-                    compilation_options: Default::default(),
-                    buffers,
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some(fs),
-                    compilation_options: Default::default(),
-                    targets: &[Some(format.into())],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: cull,
-                    ..Default::default()
-                },
-                // Reverse-Z: near = 1, far = 0.
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: DEPTH_FORMAT,
-                    depth_write_enabled: Some(true),
-                    depth_compare: Some(wgpu::CompareFunction::GreaterEqual),
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: wgpu::MultisampleState { count: sample_count, mask: !0, alpha_to_coverage_enabled: false },
-                multiview_mask: None,
-                cache: None,
-            })
-        };
-        let mesh_pipeline = make_pipeline(
-            "mesh pipeline",
-            "vs_mesh",
-            "fs_mesh",
-            &[Some(MeshVertex::LAYOUT), Some(Instance::LAYOUT)],
-            wgpu::PrimitiveTopology::TriangleList,
-            Some(wgpu::Face::Back),
-        );
-        let line_pipeline = make_pipeline(
-            "line pipeline",
-            "vs_line",
-            "fs_line",
-            &[Some(LineVertex::LAYOUT)],
-            wgpu::PrimitiveTopology::LineList,
-            None,
-        );
+        let pipelines = Pipelines::new(device, format, sample_count, &camera_layout);
 
         let cube = GpuMesh::upload(device, "unit cube", &unit_cube());
         let grid = build_grid(100, 10);
@@ -179,8 +126,8 @@ impl Renderer {
             targets,
             camera_buffer,
             camera_bind_group,
-            mesh_pipeline,
-            line_pipeline,
+            camera_layout,
+            pipelines,
             cube,
             grid_buffer,
             grid_vertex_count: grid.len() as u32,
@@ -195,6 +142,33 @@ impl Renderer {
         self.gpu.resize(width, height);
         self.targets =
             RenderTargets::new(&self.gpu.device, self.gpu.config.format, width, height, self.gpu.sample_count);
+    }
+
+    pub fn status(&self) -> RenderStatus {
+        RenderStatus {
+            vsync: self.gpu.vsync,
+            sample_count: self.gpu.sample_count,
+            supported_sample_counts: self.gpu.supported_sample_counts(),
+            size: self.gpu.size(),
+        }
+    }
+
+    pub fn set_vsync(&mut self, vsync: bool) {
+        if self.gpu.vsync != vsync {
+            self.gpu.set_vsync(vsync);
+        }
+    }
+
+    /// Requests an MSAA sample count; the effective value (see `status`) may be lower.
+    pub fn set_msaa(&mut self, requested: u32) {
+        let before = self.gpu.sample_count;
+        if self.gpu.set_sample_count(requested) == before {
+            return;
+        }
+        let (w, h) = self.gpu.size();
+        let format = self.gpu.config.format;
+        self.pipelines = Pipelines::new(&self.gpu.device, format, self.gpu.sample_count, &self.camera_layout);
+        self.targets = RenderTargets::new(&self.gpu.device, format, w, h, self.gpu.sample_count);
     }
 
     /// Effective MSAA sample count.
@@ -312,14 +286,14 @@ impl Renderer {
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
 
             if !frame.instances.is_empty() {
-                pass.set_pipeline(&self.mesh_pipeline);
+                pass.set_pipeline(&self.pipelines.mesh);
                 pass.set_vertex_buffer(0, self.cube.vertex_buffer.slice(..));
                 pass.set_vertex_buffer(1, self.instances.buffer().slice(..));
                 pass.set_index_buffer(self.cube.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
                 pass.draw_indexed(0..self.cube.index_count, 0, 0..frame.instances.len() as u32);
             }
 
-            pass.set_pipeline(&self.line_pipeline);
+            pass.set_pipeline(&self.pipelines.line);
             pass.set_vertex_buffer(0, self.grid_buffer.slice(..));
             pass.draw(0..self.grid_vertex_count, 0..1);
         }

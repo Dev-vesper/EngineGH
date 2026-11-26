@@ -6,7 +6,7 @@ use engine_render::{Environment, Frame, Instance, Renderer, RendererConfig};
 use glam::{Mat4, Quat, Vec3, Vec4};
 
 #[cfg(feature = "editor")]
-use engine_editor::{Editor, InspectorData};
+use engine_editor::{Editor, EditorOutput, InspectorData, SceneOp};
 
 #[cfg(feature = "editor")]
 #[global_allocator]
@@ -17,6 +17,7 @@ struct Sandbox {
     camera: FlyCamera,
     env: Environment,
     instances: Vec<Instance>,
+    quit: bool,
     #[cfg(feature = "editor")]
     editor: Option<Editor>,
 }
@@ -25,13 +26,18 @@ impl Sandbox {
     fn new() -> Self {
         Self {
             renderer: None,
-            camera: FlyCamera::new(Vec3::new(0.0, 5.0, 20.0), 0.0, -0.2),
+            camera: default_camera(),
             env: Environment::default(),
             instances: build_scene(),
+            quit: false,
             #[cfg(feature = "editor")]
             editor: None,
         }
     }
+}
+
+fn default_camera() -> FlyCamera {
+    FlyCamera::new(Vec3::new(0.0, 5.0, 20.0), 0.0, -0.2)
 }
 
 fn instance(translation: Vec3, scale: Vec3, rotation: Quat, rgb: [f32; 3]) -> Instance {
@@ -68,6 +74,46 @@ fn build_scene() -> Vec<Instance> {
     v
 }
 
+#[cfg(feature = "editor")]
+impl Sandbox {
+    /// Applies what the editor asked for during the frame that just rendered.
+    fn apply_editor_output(&mut self, out: EditorOutput) {
+        if let Some(r) = self.renderer.as_mut() {
+            if let Some(vsync) = out.vsync {
+                r.set_vsync(vsync);
+            }
+            if let Some(samples) = out.msaa {
+                r.set_msaa(samples);
+            }
+        }
+        if out.reset_camera {
+            self.camera = default_camera();
+        }
+        self.quit |= out.quit;
+
+        match out.scene {
+            SceneOp::None => {}
+            SceneOp::Add { model, color } => self.instances.push(Instance { model, color }),
+            SceneOp::Duplicate(i) => {
+                if let Some(&src) = self.instances.get(i) {
+                    // Offset by one unit along world X so the copy is visible.
+                    self.instances.push(Instance { model: Mat4::from_translation(Vec3::X) * src.model, ..src });
+                }
+            }
+            SceneOp::Remove(i) => {
+                if i < self.instances.len() {
+                    self.instances.remove(i);
+                }
+            }
+            SceneOp::Set { index, model, color } => {
+                if let Some(inst) = self.instances.get_mut(index) {
+                    *inst = Instance { model, color };
+                }
+            }
+        }
+    }
+}
+
 impl App for Sandbox {
     fn init(&mut self, window: Arc<PlatformWindow>) {
         let size = window.inner_size();
@@ -95,13 +141,17 @@ impl App for Sandbox {
         self.renderer = Some(renderer);
     }
 
-    fn window_event(&mut self, id: WindowId, event: &WindowEvent) -> bool {
+    fn window_event(&mut self, id: WindowId, event: &WindowEvent, cursor_grabbed: bool) -> bool {
         #[cfg(feature = "editor")]
         if let Some(editor) = self.editor.as_mut() {
-            return editor.handle_event(id, event);
+            return editor.handle_event(id, event, cursor_grabbed);
         }
-        let _ = (id, event);
+        let _ = (id, event, cursor_grabbed);
         false
+    }
+
+    fn should_exit(&self) -> bool {
+        self.quit
     }
 
     fn resize(&mut self, size: engine_platform::PhysicalSize<u32>) {
@@ -129,6 +179,8 @@ impl App for Sandbox {
 
     fn render(&mut self) {
         let Some(r) = self.renderer.as_mut() else { return };
+        #[cfg(feature = "editor")]
+        let status = r.status();
         let frame = Frame {
             view_proj: self.camera.view_proj(r.aspect()),
             eye: self.camera.position,
@@ -141,9 +193,12 @@ impl App for Sandbox {
             let mut data = InspectorData {
                 camera: &mut self.camera,
                 env: &mut self.env,
-                instance_count: self.instances.len(),
+                instances: &self.instances,
+                render: status,
             };
-            r.render_with_overlay(&frame, Some(&mut |pass, extent| editor.draw(&mut data, pass, extent)));
+            let mut out = EditorOutput::default();
+            r.render_with_overlay(&frame, Some(&mut |pass, extent| editor.draw(&mut data, &mut out, pass, extent)));
+            self.apply_editor_output(out);
             return;
         }
         r.render(&frame);

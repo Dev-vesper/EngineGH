@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ScenarioSpec {
@@ -34,6 +34,15 @@ pub struct MemoryReport {
     /// Linux only.
     pub rss_end_bytes: Option<usize>,
     pub rss_peak_bytes: Option<usize>,
+    /// Live Rust-heap bytes at the start of the measured window (after warm-up).
+    pub heap_start_bytes: usize,
+    /// `heap_end - heap_start` over the measured window. Sustained growth here is a leak;
+    /// 0 (or tiny, non-scaling noise) means steady state.
+    pub heap_growth_bytes: i64,
+    /// Rust-allocator calls per measured frame (includes wgpu/driver-side Rust allocations).
+    pub allocs_per_frame: f64,
+    /// Resident-set growth over the measured window (Linux only).
+    pub rss_growth_bytes: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

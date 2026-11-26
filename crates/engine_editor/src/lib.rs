@@ -5,6 +5,7 @@
 //! `draw` from inside the renderer's overlay pass. UI edits take effect on the next frame.
 
 mod panels;
+mod state;
 mod stats;
 
 use std::fmt;
@@ -14,12 +15,13 @@ use dear_imgui_rs::{ConfigFlags, Context};
 use dear_imgui_wgpu::{FramebufferExtent, WgpuInitInfo, WgpuRenderer};
 use dear_imgui_winit::{HiDpiMode, WinitPlatform};
 use engine_render::wgpu;
+use state::EditorState;
 use winit::event::{ElementState, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use engine_memory::MemorySampler;
-pub use panels::InspectorData;
+pub use state::{EditorOutput, InspectorData, SceneOp};
 pub use stats::FrameStats;
 
 #[derive(Debug)]
@@ -40,6 +42,9 @@ pub struct Editor {
     context: Context,
     window: Arc<Window>,
     visible: bool,
+    /// The mouse is captured by the game view; UI pointer/key input is being ignored.
+    input_blocked: bool,
+    state: EditorState,
     stats: FrameStats,
     memory: MemorySampler,
     adapter_label: String,
@@ -75,6 +80,8 @@ impl Editor {
             context,
             window,
             visible: true,
+            input_blocked: false,
+            state: EditorState::default(),
             stats: FrameStats::new(),
             memory: MemorySampler::new(),
             adapter_label: format!("{} ({:?}, {:?})", adapter.name, adapter.device_type, adapter.backend),
@@ -83,7 +90,10 @@ impl Editor {
 
     /// Feeds a window event to the UI. Returns `true` if the UI wants this event
     /// (see `engine_platform::App::window_event`). F1 toggles the editor.
-    pub fn handle_event(&mut self, id: WindowId, event: &WindowEvent) -> bool {
+    ///
+    /// While `cursor_grabbed` the UI receives no pointer motion, wheel or press events, so a
+    /// hidden/captured mouse can never click a widget. Releases still pass, so nothing sticks.
+    pub fn handle_event(&mut self, id: WindowId, event: &WindowEvent, cursor_grabbed: bool) -> bool {
         if let WindowEvent::KeyboardInput { event: key, .. } = event {
             if key.state == ElementState::Pressed && !key.repeat && key.physical_key == PhysicalKey::Code(KeyCode::F1)
             {
@@ -93,6 +103,18 @@ impl Editor {
         }
         if !self.visible {
             return false;
+        }
+        if cursor_grabbed {
+            if !self.input_blocked {
+                self.input_blocked = true;
+                // Move the UI pointer off-screen so hover and active states clear.
+                self.context.io_mut().add_mouse_pos_event([f32::MIN, f32::MIN]);
+            }
+            if is_pointer_or_press(event) {
+                return false;
+            }
+        } else {
+            self.input_blocked = false;
         }
         let outcome = match self.platform.handle_window_event(&mut self.context, id, event) {
             Ok(o) => o,
@@ -114,7 +136,13 @@ impl Editor {
     }
 
     /// Builds the UI and records its draw commands into `pass` (the renderer's overlay pass).
-    pub fn draw(&mut self, data: &mut InspectorData<'_>, pass: &mut wgpu::RenderPass<'_>, extent: (u32, u32)) {
+    pub fn draw(
+        &mut self,
+        data: &mut InspectorData<'_>,
+        out: &mut EditorOutput,
+        pass: &mut wgpu::RenderPass<'_>,
+        extent: (u32, u32),
+    ) {
         if !self.visible || extent.0 == 0 || extent.1 == 0 {
             return;
         }
@@ -125,10 +153,12 @@ impl Editor {
 
         let memory = *self.memory.update();
         let ui = self.context.frame();
-        panels::draw(
+        panels::draw_all(
             ui,
+            &mut self.state,
             &panels::PanelContext { stats: &self.stats, memory: &memory, adapter: &self.adapter_label },
             data,
+            out,
         );
         if let Err(e) = self.platform.prepare_render(ui, &self.window) {
             log::error!("imgui prepare_render failed: {e}");
@@ -145,5 +175,15 @@ impl Editor {
         if let Err(e) = self.renderer.render(pending, pass, FramebufferExtent::new(extent.0, extent.1)) {
             log::error!("imgui render failed: {e}");
         }
+    }
+}
+
+/// Events that must not reach the UI while the game view owns the mouse.
+fn is_pointer_or_press(event: &WindowEvent) -> bool {
+    match event {
+        WindowEvent::CursorMoved { .. } | WindowEvent::MouseWheel { .. } | WindowEvent::Ime(_) => true,
+        WindowEvent::MouseInput { state, .. } => *state == ElementState::Pressed,
+        WindowEvent::KeyboardInput { event, .. } => event.state == ElementState::Pressed,
+        _ => false,
     }
 }
