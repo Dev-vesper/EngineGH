@@ -1,0 +1,6 @@
+[package]
+name = "engine_memory"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

@@ -7,7 +7,8 @@ use crate::gpu::{GpuContext, GpuError};
 use crate::grid::{build_grid, LineVertex};
 use crate::instance::{DynamicBuffer, Instance};
 use crate::mesh::{unit_cube, GpuMesh, MeshVertex};
-use crate::targets::{RenderTargets, DEPTH_FORMAT, SAMPLE_COUNT};
+use crate::config::RendererConfig;
+use crate::targets::{RenderTargets, DEPTH_FORMAT};
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -60,13 +61,14 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new<W>(window: W, size: (u32, u32)) -> Result<Self, GpuError>
+    pub fn new<W>(window: W, size: (u32, u32), config: RendererConfig) -> Result<Self, GpuError>
     where
         W: HasWindowHandle + HasDisplayHandle + Clone + std::fmt::Debug + Send + Sync + 'static,
     {
-        let gpu = GpuContext::new(window, size)?;
+        let gpu = GpuContext::new(window, size, &config)?;
         let device = &gpu.device;
         let format = gpu.config.format;
+        let sample_count = gpu.sample_count;
 
         let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("camera uniform"),
@@ -138,7 +140,7 @@ impl Renderer {
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
-                multisample: wgpu::MultisampleState { count: SAMPLE_COUNT, mask: !0, alpha_to_coverage_enabled: false },
+                multisample: wgpu::MultisampleState { count: sample_count, mask: !0, alpha_to_coverage_enabled: false },
                 multiview_mask: None,
                 cache: None,
             })
@@ -169,7 +171,7 @@ impl Renderer {
         });
 
         let (w, h) = gpu.size();
-        let targets = RenderTargets::new(device, format, w, h);
+        let targets = RenderTargets::new(device, format, w, h, sample_count);
         let instances = DynamicBuffer::new(device, "instances", wgpu::BufferUsages::VERTEX, 64 * 1024);
 
         Ok(Self {
@@ -191,7 +193,19 @@ impl Renderer {
             return;
         }
         self.gpu.resize(width, height);
-        self.targets = RenderTargets::new(&self.gpu.device, self.gpu.config.format, width, height);
+        self.targets =
+            RenderTargets::new(&self.gpu.device, self.gpu.config.format, width, height, self.gpu.sample_count);
+    }
+
+    /// Effective MSAA sample count.
+    #[inline]
+    pub fn sample_count(&self) -> u32 {
+        self.gpu.sample_count
+    }
+
+    #[inline]
+    pub fn size(&self) -> (u32, u32) {
+        self.gpu.size()
     }
 
     #[inline]
@@ -220,25 +234,28 @@ impl Renderer {
         &self.gpu.adapter_info
     }
 
-    pub fn render(&mut self, frame: &Frame<'_>) {
-        self.render_with_overlay(frame, None);
+    /// Returns `true` if a frame was submitted and presented, `false` if it was skipped
+    /// (surface lost/outdated/occluded/timeout).
+    pub fn render(&mut self, frame: &Frame<'_>) -> bool {
+        self.render_with_overlay(frame, None)
     }
 
     /// Like [`Renderer::render`], then runs `overlay` in a second pass (no depth, 1 sample)
     /// that loads the already-resolved surface image.
-    pub fn render_with_overlay(&mut self, frame: &Frame<'_>, overlay: Option<OverlayFn<'_>>) {
+    pub fn render_with_overlay(&mut self, frame: &Frame<'_>, overlay: Option<OverlayFn<'_>>) -> bool {
         let surface_texture = match self.gpu.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 let (w, h) = self.gpu.size();
                 self.gpu.surface.configure(&self.gpu.device, &self.gpu.config);
-                self.targets = RenderTargets::new(&self.gpu.device, self.gpu.config.format, w, h);
-                return;
+                self.targets =
+                    RenderTargets::new(&self.gpu.device, self.gpu.config.format, w, h, self.gpu.sample_count);
+                return false;
             }
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return,
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return false,
             wgpu::CurrentSurfaceTexture::Validation => {
                 log::error!("surface validation error while acquiring frame");
-                return;
+                return false;
             }
         };
         let resolve_view = surface_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -261,9 +278,9 @@ impl Renderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.targets.color_msaa,
+                    view: self.targets.color_msaa.as_ref().unwrap_or(&resolve_view),
                     depth_slice: None,
-                    resolve_target: Some(&resolve_view),
+                    resolve_target: self.targets.color_msaa.as_ref().map(|_| &resolve_view),
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
                             r: env.sky.x as f64,
@@ -272,7 +289,11 @@ impl Renderer {
                             a: 1.0,
                         }),
                         // MSAA contents are only needed for the resolve.
-                        store: wgpu::StoreOp::Discard,
+                        store: if self.targets.color_msaa.is_some() {
+                            wgpu::StoreOp::Discard
+                        } else {
+                            wgpu::StoreOp::Store
+                        },
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
@@ -323,5 +344,6 @@ impl Renderer {
         }
         self.gpu.queue.submit(Some(encoder.finish()));
         self.gpu.queue.present(surface_texture);
+        true
     }
 }

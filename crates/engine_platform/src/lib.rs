@@ -49,6 +49,11 @@ pub trait App {
     fn window_event(&mut self, _id: WindowId, _event: &WindowEvent) -> bool {
         false
     }
+
+    /// Polled after every rendered frame; return `true` to close the window and end `run`.
+    fn should_exit(&self) -> bool {
+        false
+    }
 }
 
 pub fn run<A: App>(config: WindowConfig, app: A) -> Result<(), winit::error::EventLoopError> {
@@ -155,6 +160,9 @@ impl<A: App> ApplicationHandler for Runner<A> {
                 self.app.update(dt, &self.input);
                 self.app.render();
                 self.input.end_frame();
+                if self.app.should_exit() {
+                    event_loop.exit();
+                }
             }
             _ => {}
         }

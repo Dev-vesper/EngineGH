@@ -11,8 +11,9 @@ engine_render.workspace = true
 env_logger.workspace = true
 log.workspace = true
 engine_editor = { workspace = true, optional = true }
+engine_memory = { workspace = true, optional = true }
 
 [features]
 # Dear ImGui editor overlay (C++ dependency). Build with --no-default-features for a GUI-free binary.
 default = ["editor"]
-editor = ["dep:engine_editor"]
+editor = ["dep:engine_editor", "dep:engine_memory"]

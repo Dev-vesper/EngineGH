@@ -4,7 +4,6 @@
 //! Frame flow: `handle_event` for every window event, `update_stats` once per frame, then
 //! `draw` from inside the renderer's overlay pass. UI edits take effect on the next frame.
 
-mod memory;
 mod panels;
 mod stats;
 
@@ -19,7 +18,7 @@ use winit::event::{ElementState, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
-pub use memory::{MemorySampler, MemoryStats, TrackingAllocator};
+use engine_memory::MemorySampler;
 pub use panels::InspectorData;
 pub use stats::FrameStats;
 

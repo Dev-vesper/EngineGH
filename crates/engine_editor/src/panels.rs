@@ -3,7 +3,7 @@ use engine_camera::FlyCamera;
 use engine_render::Environment;
 use glam::Vec3;
 
-use crate::memory::MemoryStats;
+use engine_memory::MemoryStats;
 use crate::stats::FrameStats;
 
 /// Mutable engine state the inspector edits. Borrowed for one frame.

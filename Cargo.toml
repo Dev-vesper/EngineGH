@@ -5,6 +5,8 @@ members = [
     "crates/engine_camera",
     "crates/engine_render",
     "crates/engine_editor",
+    "crates/engine_memory",
+    "apps/benchmark",
     "apps/sandbox",
 ]
 
@@ -26,6 +28,9 @@ engine_platform = { path = "crates/engine_platform" }
 engine_camera = { path = "crates/engine_camera" }
 engine_render = { path = "crates/engine_render" }
 engine_editor = { path = "crates/engine_editor" }
+engine_memory = { path = "crates/engine_memory" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [profile.dev]
 opt-level = 1

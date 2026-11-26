@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use engine_camera::FlyCamera;
 use engine_platform::{run, App, Input, Key, PlatformWindow, WindowConfig, WindowEvent, WindowId};
-use engine_render::{Environment, Frame, Instance, Renderer};
+use engine_render::{Environment, Frame, Instance, Renderer, RendererConfig};
 use glam::{Mat4, Quat, Vec3, Vec4};
 
 #[cfg(feature = "editor")]
@@ -10,7 +10,7 @@ use engine_editor::{Editor, InspectorData};
 
 #[cfg(feature = "editor")]
 #[global_allocator]
-static ALLOCATOR: engine_editor::TrackingAllocator = engine_editor::TrackingAllocator;
+static ALLOCATOR: engine_memory::TrackingAllocator = engine_memory::TrackingAllocator;
 
 struct Sandbox {
     renderer: Option<Renderer>,
@@ -73,7 +73,7 @@ impl App for Sandbox {
         let size = window.inner_size();
         #[cfg(feature = "editor")]
         let editor_window = window.clone();
-        let renderer = match Renderer::new(window, (size.width, size.height)) {
+        let renderer = match Renderer::new(window, (size.width, size.height), RendererConfig::default()) {
             Ok(r) => r,
             Err(e) => {
                 log::error!("renderer init failed: {e}");

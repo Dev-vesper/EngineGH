@@ -2,6 +2,9 @@ use std::fmt;
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
+use crate::config::RendererConfig;
+use crate::targets::DEPTH_FORMAT;
+
 #[derive(Debug)]
 pub enum GpuError {
     Surface(wgpu::CreateSurfaceError),
@@ -29,10 +32,12 @@ pub struct GpuContext {
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
     pub adapter_info: wgpu::AdapterInfo,
+    /// Effective MSAA sample count (may be lower than requested).
+    pub sample_count: u32,
 }
 
 impl GpuContext {
-    pub fn new<W>(window: W, size: (u32, u32)) -> Result<Self, GpuError>
+    pub fn new<W>(window: W, size: (u32, u32), settings: &RendererConfig) -> Result<Self, GpuError>
     where
         W: HasWindowHandle + HasDisplayHandle + Clone + std::fmt::Debug + Send + Sync + 'static,
     {
@@ -70,7 +75,11 @@ impl GpuContext {
             format,
             width: size.0.max(1),
             height: size.1.max(1),
-            present_mode: wgpu::PresentMode::AutoVsync,
+            present_mode: if settings.vsync {
+                wgpu::PresentMode::AutoVsync
+            } else {
+                wgpu::PresentMode::AutoNoVsync
+            },
             desired_maximum_frame_latency: 2,
             alpha_mode: caps.alpha_modes[0],
             color_space: wgpu::SurfaceColorSpace::Auto,
@@ -78,8 +87,9 @@ impl GpuContext {
         };
         surface.configure(&device, &config);
 
+        let sample_count = resolve_sample_count(&adapter, format, settings.msaa_samples);
         let adapter_info = adapter.get_info();
-        Ok(Self { surface, device, queue, config, adapter_info })
+        Ok(Self { surface, device, queue, config, adapter_info, sample_count })
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -122,4 +132,17 @@ fn select_adapter(instance: &wgpu::Instance, surface: &wgpu::Surface<'_>) -> Res
         .into_iter()
         .min_by_key(|a| adapter_rank(a.get_info().device_type))
         .ok_or(GpuError::NoAdapter)
+}
+
+/// Largest supported sample count not above `requested` for both colour and depth, else 1.
+fn resolve_sample_count(adapter: &wgpu::Adapter, color: wgpu::TextureFormat, requested: u32) -> u32 {
+    let supports = |format, n| adapter.get_texture_format_features(format).flags.sample_count_supported(n);
+    let mut n = requested.max(1);
+    while n > 1 && !(supports(color, n) && supports(DEPTH_FORMAT, n)) {
+        n /= 2;
+    }
+    if n != requested {
+        log::warn!("MSAA x{requested} unsupported on this adapter/format; using x{n}");
+    }
+    n
 }

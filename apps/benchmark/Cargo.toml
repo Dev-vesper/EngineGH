@@ -1,0 +1,21 @@
+[package]
+name = "benchmark"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+glam.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+env_logger.workspace = true
+engine_platform.workspace = true
+engine_camera.workspace = true
+engine_render.workspace = true
+engine_memory.workspace = true
+engine_editor = { workspace = true, optional = true }
+
+[features]
+# Enables the `--gui on` scenario (Dear ImGui overlay cost).
+default = []
+editor = ["dep:engine_editor"]
