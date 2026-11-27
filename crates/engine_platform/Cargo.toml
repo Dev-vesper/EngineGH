@@ -7,3 +7,4 @@ edition.workspace = true
 glam.workspace = true
 winit.workspace = true
 log.workspace = true
+engine_time.workspace = true

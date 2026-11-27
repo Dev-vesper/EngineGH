@@ -6,6 +6,8 @@ members = [
     "crates/engine_render",
     "crates/engine_editor",
     "crates/engine_memory",
+    "crates/engine_time",
+    "crates/engine_scene",
     "apps/benchmark",
     "apps/sandbox",
 ]
@@ -29,6 +31,8 @@ engine_camera = { path = "crates/engine_camera" }
 engine_render = { path = "crates/engine_render" }
 engine_editor = { path = "crates/engine_editor" }
 engine_memory = { path = "crates/engine_memory" }
+engine_time = { path = "crates/engine_time" }
+engine_scene = { path = "crates/engine_scene" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

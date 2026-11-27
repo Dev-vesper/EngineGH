@@ -3,20 +3,29 @@ use std::sync::Arc;
 use engine_camera::FlyCamera;
 use engine_platform::{run, App, Input, Key, PlatformWindow, WindowConfig, WindowEvent, WindowId};
 use engine_render::{Environment, Frame, Instance, Renderer, RendererConfig};
-use glam::{Mat4, Quat, Vec3, Vec4};
+use engine_scene::{extract_instances, snapshot_transforms, spawn_cube, Entity, RenderCube, Transform, World};
+use glam::{Quat, Vec3, Vec4};
 
 #[cfg(feature = "editor")]
 use engine_editor::{Editor, EditorOutput, InspectorData, SceneOp};
+#[cfg(feature = "editor")]
+use engine_scene::PreviousTransform;
 
 #[cfg(feature = "editor")]
 #[global_allocator]
 static ALLOCATOR: engine_memory::TrackingAllocator = engine_memory::TrackingAllocator;
 
+/// Angular velocity around world Y in rad/s. Sandbox-specific demo component.
+struct Spin(f32);
+
 struct Sandbox {
     renderer: Option<Renderer>,
     camera: FlyCamera,
     env: Environment,
+    world: World,
+    /// Render data of the current frame; `entities[i]` is the entity behind `instances[i]`.
     instances: Vec<Instance>,
+    entities: Vec<Entity>,
     quit: bool,
     #[cfg(feature = "editor")]
     editor: Option<Editor>,
@@ -24,11 +33,15 @@ struct Sandbox {
 
 impl Sandbox {
     fn new() -> Self {
+        let mut world = World::new();
+        populate(&mut world);
         Self {
             renderer: None,
             camera: default_camera(),
             env: Environment::default(),
-            instances: build_scene(),
+            world,
+            instances: Vec::new(),
+            entities: Vec::new(),
             quit: false,
             #[cfg(feature = "editor")]
             editor: None,
@@ -40,38 +53,41 @@ fn default_camera() -> FlyCamera {
     FlyCamera::new(Vec3::new(0.0, 5.0, 20.0), 0.0, -0.2)
 }
 
-fn instance(translation: Vec3, scale: Vec3, rotation: Quat, rgb: [f32; 3]) -> Instance {
-    Instance {
-        model: Mat4::from_scale_rotation_translation(scale, rotation, translation),
-        color: Vec4::new(rgb[0], rgb[1], rgb[2], 1.0),
-    }
+fn cube(world: &mut World, position: Vec3, scale: Vec3, rotation: Quat, rgb: [f32; 3]) -> Entity {
+    spawn_cube(
+        world,
+        Transform { position, rotation, scale },
+        RenderCube { color: Vec4::new(rgb[0], rgb[1], rgb[2], 1.0) },
+    )
 }
 
-fn build_scene() -> Vec<Instance> {
+fn populate(world: &mut World) {
     // Ground slab: top face at y = -0.002 so it never z-fights with the y = 0 grid.
-    let mut v = vec![instance(
-        Vec3::new(0.0, -0.052, 0.0),
-        Vec3::new(400.0, 0.1, 400.0),
-        Quat::IDENTITY,
-        [0.015, 0.018, 0.022],
-    )];
+    cube(world, Vec3::new(0.0, -0.052, 0.0), Vec3::new(400.0, 0.1, 400.0), Quat::IDENTITY, [0.015, 0.018, 0.022]);
 
-    // Ring of cubes of varying size and tilt.
+    // Ring of spinning cubes of varying size and tilt.
     const COUNT: usize = 12;
     for i in 0..COUNT {
         let t = i as f32 / COUNT as f32;
         let angle = t * std::f32::consts::TAU;
-        let radius = 8.0;
         let size = 0.8 + 1.4 * (0.5 + 0.5 * (angle * 3.0).sin());
         let rot = Quat::from_rotation_y(angle) * Quat::from_rotation_x(0.35 * (angle * 2.0).cos());
-        let pos = Vec3::new(angle.cos() * radius, size * 0.5 + 0.01, angle.sin() * radius);
-        let hue = [0.25 + 0.6 * t, 0.35 + 0.4 * (1.0 - t), 0.8 - 0.5 * t];
-        v.push(instance(pos, Vec3::splat(size), rot, hue));
+        let pos = Vec3::new(angle.cos() * 8.0, size * 0.5 + 0.01, angle.sin() * 8.0);
+        let rgb = [0.25 + 0.6 * t, 0.35 + 0.4 * (1.0 - t), 0.8 - 0.5 * t];
+        let e = cube(world, pos, Vec3::splat(size), rot, rgb);
+        let direction = if i % 2 == 0 { 1.0 } else { -1.0 };
+        world.insert_one(e, Spin(0.6 * direction)).expect("entity was just spawned");
     }
 
     // Central tower (non-uniform scale exercises the normal matrix).
-    v.push(instance(Vec3::new(0.0, 2.0, 0.0), Vec3::new(1.5, 4.0, 1.5), Quat::IDENTITY, [0.7, 0.55, 0.2]));
-    v
+    cube(world, Vec3::new(0.0, 2.0, 0.0), Vec3::new(1.5, 4.0, 1.5), Quat::IDENTITY, [0.7, 0.55, 0.2]);
+}
+
+/// Simulation system: runs in `fixed_update`, so it is frame-rate independent.
+fn spin_system(world: &mut World, dt: f32) {
+    for (transform, spin) in world.query_mut::<(&mut Transform, &Spin)>() {
+        transform.rotation = (Quat::from_rotation_y(spin.0 * dt) * transform.rotation).normalize();
+    }
 }
 
 #[cfg(feature = "editor")]
@@ -91,23 +107,36 @@ impl Sandbox {
         }
         self.quit |= out.quit;
 
+        // Scene indices refer to this frame's `entities` (see `render`).
+        let entity_at = |i: usize| self.entities.get(i).copied();
         match out.scene {
             SceneOp::None => {}
-            SceneOp::Add { model, color } => self.instances.push(Instance { model, color }),
+            SceneOp::Add { model, color } => {
+                spawn_cube(&mut self.world, Transform::from_matrix(model), RenderCube { color });
+            }
             SceneOp::Duplicate(i) => {
-                if let Some(&src) = self.instances.get(i) {
-                    // Offset by one unit along world X so the copy is visible.
-                    self.instances.push(Instance { model: Mat4::from_translation(Vec3::X) * src.model, ..src });
+                let source = entity_at(i)
+                    .and_then(|e| self.world.query_one_mut::<(&Transform, &RenderCube)>(e).ok())
+                    .map(|(t, c)| (*t, *c));
+                if let Some((mut transform, cube)) = source {
+                    transform.position += Vec3::X; // visible offset from the original
+                    spawn_cube(&mut self.world, transform, cube);
                 }
             }
             SceneOp::Remove(i) => {
-                if i < self.instances.len() {
-                    self.instances.remove(i);
+                if let Some(e) = entity_at(i) {
+                    let _ = self.world.despawn(e);
                 }
             }
             SceneOp::Set { index, model, color } => {
-                if let Some(inst) = self.instances.get_mut(index) {
-                    *inst = Instance { model, color };
+                if let Some(e) = entity_at(index) {
+                    if let Ok((t, prev, c)) =
+                        self.world.query_one_mut::<(&mut Transform, &mut PreviousTransform, &mut RenderCube)>(e)
+                    {
+                        *t = Transform::from_matrix(model);
+                        prev.0 = *t; // an edit is a teleport, not motion to interpolate
+                        c.color = color;
+                    }
                 }
             }
         }
@@ -160,6 +189,11 @@ impl App for Sandbox {
         }
     }
 
+    fn fixed_update(&mut self, dt: f32) {
+        snapshot_transforms(&mut self.world); // must precede every system that moves a Transform
+        spin_system(&mut self.world, dt);
+    }
+
     fn update(&mut self, dt: f32, input: &Input) {
         #[cfg(feature = "editor")]
         if let Some(editor) = self.editor.as_mut() {
@@ -177,7 +211,9 @@ impl App for Sandbox {
         self.camera.translate(axes, boost, dt);
     }
 
-    fn render(&mut self) {
+    fn render(&mut self, alpha: f32) {
+        extract_instances(&self.world, alpha, &mut self.instances, &mut self.entities);
+
         let Some(r) = self.renderer.as_mut() else { return };
         #[cfg(feature = "editor")]
         let status = r.status();

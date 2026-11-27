@@ -5,6 +5,7 @@ mod input;
 use std::sync::Arc;
 use std::time::Instant;
 
+use engine_time::FixedTimestep;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton};
@@ -22,14 +23,19 @@ pub use winit::window::Window as PlatformWindow;
 /// Upper bound on a single frame delta, so a stall (drag, breakpoint) does not teleport the camera.
 const MAX_DT: f32 = 0.1;
 
+/// Maximum fixed steps per rendered frame; beyond this the backlog is dropped.
+const MAX_FIXED_STEPS: u32 = 5;
+
 pub struct WindowConfig {
     pub title: String,
     pub logical_size: (f64, f64),
+    /// Fixed simulation rate in Hz (see `App::fixed_update`).
+    pub fixed_hz: f64,
 }
 
 impl Default for WindowConfig {
     fn default() -> Self {
-        Self { title: "Engine".to_owned(), logical_size: (1280.0, 720.0) }
+        Self { title: "Engine".to_owned(), logical_size: (1280.0, 720.0), fixed_hz: 60.0 }
     }
 }
 
@@ -39,8 +45,15 @@ pub trait App {
     /// `raw_window_handle::{HasWindowHandle, HasDisplayHandle}`.
     fn init(&mut self, window: Arc<Window>);
     fn resize(&mut self, size: PhysicalSize<u32>);
+    /// Simulation step at a constant rate (`WindowConfig::fixed_hz`). Runs zero or more times per
+    /// frame, before `update`. Put gameplay and physics here.
+    fn fixed_update(&mut self, _dt: f32) {}
+
+    /// Once per rendered frame with the real (clamped) frame time: camera, UI, input handling.
     fn update(&mut self, dt: f32, input: &Input);
-    fn render(&mut self);
+
+    /// `alpha` in [0, 1] is how far render time lies between the last two fixed states.
+    fn render(&mut self, alpha: f32);
 
     /// Sees every window event first (e.g. a GUI layer). `cursor_grabbed` tells whether the mouse
     /// is currently captured by the game view (hidden/locked): a GUI must then ignore pointer and
@@ -58,6 +71,7 @@ pub trait App {
 }
 
 pub fn run<A: App>(config: WindowConfig, app: A) -> Result<(), winit::error::EventLoopError> {
+    let fixed_hz = config.fixed_hz;
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut runner = Runner {
@@ -66,6 +80,9 @@ pub fn run<A: App>(config: WindowConfig, app: A) -> Result<(), winit::error::Eve
         window: None,
         input: Input::default(),
         last_frame: Instant::now(),
+        fixed: FixedTimestep::new(fixed_hz, MAX_FIXED_STEPS),
+        dropped_seconds: 0.0,
+        last_drop_warning: Instant::now(),
     };
     event_loop.run_app(&mut runner)
 }
@@ -76,6 +93,10 @@ struct Runner<A: App> {
     window: Option<Arc<Window>>,
     input: Input,
     last_frame: Instant,
+    fixed: FixedTimestep,
+    /// Simulation time dropped since the last warning (warnings are limited to 1 per second).
+    dropped_seconds: f64,
+    last_drop_warning: Instant,
 }
 
 impl<A: App> Runner<A> {
@@ -161,8 +182,19 @@ impl<A: App> ApplicationHandler for Runner<A> {
                 if size.width == 0 || size.height == 0 {
                     return; // minimised
                 }
+                let plan = self.fixed.advance(f64::from(dt));
+                self.dropped_seconds += plan.dropped_seconds;
+                if self.dropped_seconds > 0.0 && self.last_drop_warning.elapsed().as_secs() >= 1 {
+                    log::warn!("simulation fell behind: dropped {:.0} ms in the last second", self.dropped_seconds * 1000.0);
+                    self.dropped_seconds = 0.0;
+                    self.last_drop_warning = now;
+                }
+                let step = self.fixed.step_seconds();
+                for _ in 0..plan.steps {
+                    self.app.fixed_update(step);
+                }
                 self.app.update(dt, &self.input);
-                self.app.render();
+                self.app.render(plan.alpha);
                 self.input.end_frame();
                 if self.app.should_exit() {
                     event_loop.exit();

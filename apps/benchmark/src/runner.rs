@@ -172,7 +172,7 @@ impl App for BenchApp {
         }
     }
 
-    fn render(&mut self) {
+    fn render(&mut self, _alpha: f32) {
         if self.done {
             return;
         }

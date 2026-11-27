@@ -1,0 +1,9 @@
+[package]
+name = "engine_scene"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+glam.workspace = true
+hecs = "0.11"
+engine_render.workspace = true
