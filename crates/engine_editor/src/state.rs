@@ -1,5 +1,6 @@
 use engine_camera::FlyCamera;
 use engine_render::{Environment, Instance, RenderStatus};
+use engine_time::SimControl;
 use glam::{Mat4, Quat, Vec4};
 
 /// Engine state the editor may read or edit directly during a frame. Everything the renderer
@@ -8,6 +9,7 @@ use glam::{Mat4, Quat, Vec4};
 pub struct InspectorData<'a> {
     pub camera: &'a mut FlyCamera,
     pub env: &'a mut Environment,
+    pub sim: &'a mut SimControl,
     pub instances: &'a [Instance],
     pub render: RenderStatus,
 }
@@ -30,6 +32,7 @@ pub struct EditorOutput {
     /// Requested MSAA samples (effective value may differ, see `RenderStatus`).
     pub msaa: Option<u32>,
     pub reset_camera: bool,
+    pub reset_environment: bool,
     pub quit: bool,
     /// At most one scene edit per frame.
     pub scene: SceneOp,
@@ -39,6 +42,7 @@ pub(crate) struct PanelVisibility {
     pub performance: bool,
     pub renderer: bool,
     pub memory: bool,
+    pub simulation: bool,
     pub camera: bool,
     pub environment: bool,
     pub scene: bool,
@@ -51,6 +55,7 @@ impl Default for PanelVisibility {
             performance: true,
             renderer: true,
             memory: true,
+            simulation: true,
             camera: true,
             environment: true,
             scene: true,

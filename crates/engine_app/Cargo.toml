@@ -1,20 +1,20 @@
 [package]
-name = "sandbox"
+name = "engine_app"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
 glam.workspace = true
+log.workspace = true
+env_logger.workspace = true
 engine_platform.workspace = true
 engine_camera.workspace = true
 engine_render.workspace = true
 engine_scene.workspace = true
-env_logger.workspace = true
-log.workspace = true
+engine_time.workspace = true
 engine_editor = { workspace = true, optional = true }
 engine_memory = { workspace = true, optional = true }
 
 [features]
-# Dear ImGui editor overlay (C++ dependency). Build with --no-default-features for a GUI-free binary.
-default = ["editor"]
+# In-process editor overlay (Dear ImGui) + heap tracking. Games forward this feature.
 editor = ["dep:engine_editor", "dep:engine_memory"]

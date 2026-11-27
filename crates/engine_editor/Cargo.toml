@@ -10,6 +10,7 @@ log.workspace = true
 engine_camera.workspace = true
 engine_render.workspace = true
 engine_memory.workspace = true
+engine_time.workspace = true
 dear-imgui-rs = "0.23"
 dear-imgui-wgpu = "0.23"
 dear-imgui-winit = "0.23"

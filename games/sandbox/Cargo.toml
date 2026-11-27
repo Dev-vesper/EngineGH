@@ -1,0 +1,12 @@
+[package]
+name = "sandbox"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+engine_app.workspace = true
+
+[features]
+# Editor overlay inside the running game (toggle with F1). `--no-default-features` removes it.
+default = ["editor"]
+editor = ["engine_app/editor"]

@@ -52,6 +52,38 @@ impl FixedTimestep {
     }
 }
 
+/// Runtime control of the simulation (editor / debug tools): pause, single-step, slow motion.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SimControl {
+    pub paused: bool,
+    /// Multiplies the `dt` handed to simulation systems (1.0 = real time).
+    pub time_scale: f32,
+    step_requested: bool,
+}
+
+impl Default for SimControl {
+    fn default() -> Self {
+        Self { paused: false, time_scale: 1.0, step_requested: false }
+    }
+}
+
+impl SimControl {
+    /// While paused, runs exactly one fixed step at the next opportunity.
+    pub fn request_step(&mut self) {
+        if self.paused {
+            self.step_requested = true;
+        }
+    }
+
+    /// Call once per fixed step: whether the simulation should advance. Consumes a step request.
+    pub fn should_step(&mut self) -> bool {
+        if !self.paused {
+            return true;
+        }
+        std::mem::take(&mut self.step_requested)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,5 +135,20 @@ mod tests {
     fn negative_dt_is_ignored() {
         let mut t = FixedTimestep::new(60.0, 5);
         assert_eq!(t.advance(-1.0).steps, 0);
+    }
+
+    #[test]
+    fn sim_control_pause_and_single_step() {
+        let mut sim = SimControl::default();
+        assert!(sim.should_step());
+        sim.paused = true;
+        assert!(!sim.should_step());
+        sim.request_step();
+        assert!(sim.should_step(), "one step granted");
+        assert!(!sim.should_step(), "and only one");
+        sim.paused = false;
+        sim.request_step(); // ignored while running
+        sim.paused = true;
+        assert!(!sim.should_step());
     }
 }

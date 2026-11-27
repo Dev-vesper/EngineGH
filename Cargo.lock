@@ -513,6 +513,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
+name = "engine_app"
+version = "0.1.0"
+dependencies = [
+ "engine_camera",
+ "engine_editor",
+ "engine_memory",
+ "engine_platform",
+ "engine_render",
+ "engine_scene",
+ "engine_time",
+ "env_logger",
+ "glam",
+ "log",
+]
+
+[[package]]
 name = "engine_camera"
 version = "0.1.0"
 dependencies = [
@@ -529,6 +545,7 @@ dependencies = [
  "engine_camera",
  "engine_memory",
  "engine_render",
+ "engine_time",
  "glam",
  "log",
  "winit",
@@ -1799,15 +1816,7 @@ dependencies = [
 name = "sandbox"
 version = "0.1.0"
 dependencies = [
- "engine_camera",
- "engine_editor",
- "engine_memory",
- "engine_platform",
- "engine_render",
- "engine_scene",
- "env_logger",
- "glam",
- "log",
+ "engine_app",
 ]
 
 [[package]]

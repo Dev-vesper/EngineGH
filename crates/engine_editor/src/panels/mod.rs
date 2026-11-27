@@ -7,6 +7,7 @@ mod memory;
 mod performance;
 mod renderer;
 mod scene;
+mod simulation;
 
 use dear_imgui_rs::{Condition, Ui};
 use engine_memory::MemoryStats;
@@ -80,9 +81,10 @@ pub(crate) fn draw_all(
         renderer::draw(ui, cx.adapter, &data.render, data.instances.len(), out)
     });
     panel(ui, "Memory", &mut p.memory, [left, top + 300.0], || memory::draw(ui, cx.memory));
+    panel(ui, "Simulation", &mut p.simulation, [left, top + 455.0], || simulation::draw(ui, data.sim));
     panel(ui, "Camera", &mut p.camera, [right, top], || camera::draw(ui, data.camera, out));
     panel(ui, "Environment", &mut p.environment, [right, top + 250.0], || {
-        environment::draw(ui, data.env)
+        environment::draw(ui, data.env, out)
     });
     panel(ui, "Scene", &mut p.scene, [right, top + 395.0], || {
         scene::draw(ui, &mut state.selection, data.instances, data.camera, out)
@@ -105,6 +107,7 @@ fn draw_menu_bar(ui: &Ui, state: &mut EditorState, cx: &PanelContext<'_>, out: &
             ui.menu_item_toggle_no_shortcut("Performance", &mut p.performance, true);
             ui.menu_item_toggle_no_shortcut("Renderer", &mut p.renderer, true);
             ui.menu_item_toggle_no_shortcut("Memory", &mut p.memory, true);
+            ui.menu_item_toggle_no_shortcut("Simulation", &mut p.simulation, true);
             ui.menu_item_toggle_no_shortcut("Camera", &mut p.camera, true);
             ui.menu_item_toggle_no_shortcut("Environment", &mut p.environment, true);
             ui.menu_item_toggle_no_shortcut("Scene", &mut p.scene, true);

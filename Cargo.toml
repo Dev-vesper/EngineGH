@@ -1,21 +1,10 @@
 [workspace]
 resolver = "2"
-members = [
-    "crates/engine_platform",
-    "crates/engine_camera",
-    "crates/engine_render",
-    "crates/engine_editor",
-    "crates/engine_memory",
-    "crates/engine_time",
-    "crates/engine_scene",
-    "apps/benchmark",
-    "apps/sandbox",
-]
+members = ["crates/*", "apps/*", "games/*"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "BSD-2-Clause"
 
 [workspace.dependencies]
 glam = { version = "0.34", features = ["bytemuck"] }
@@ -26,16 +15,17 @@ bytemuck = { version = "1", features = ["derive"] }
 pollster = "1"
 log = "0.4"
 env_logger = "0.11"
-
-engine_platform = { path = "crates/engine_platform" }
-engine_camera = { path = "crates/engine_camera" }
-engine_render = { path = "crates/engine_render" }
-engine_editor = { path = "crates/engine_editor" }
-engine_memory = { path = "crates/engine_memory" }
-engine_time = { path = "crates/engine_time" }
-engine_scene = { path = "crates/engine_scene" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+engine_app = { path = "crates/engine_app" }
+engine_camera = { path = "crates/engine_camera" }
+engine_editor = { path = "crates/engine_editor" }
+engine_memory = { path = "crates/engine_memory" }
+engine_platform = { path = "crates/engine_platform" }
+engine_render = { path = "crates/engine_render" }
+engine_scene = { path = "crates/engine_scene" }
+engine_time = { path = "crates/engine_time" }
 
 [profile.dev]
 opt-level = 1
