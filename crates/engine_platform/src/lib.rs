@@ -8,7 +8,7 @@ use std::time::Instant;
 use engine_time::FixedTimestep;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton};
+use winit::event::{DeviceEvent, DeviceId};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window};
@@ -16,7 +16,7 @@ use winit::window::{CursorGrabMode, Window};
 pub use input::Input;
 pub use winit::keyboard::KeyCode as Key;
 pub use winit::dpi::PhysicalSize;
-pub use winit::event::WindowEvent;
+pub use winit::event::{ElementState, MouseButton, WindowEvent};
 pub use winit::window::WindowId;
 pub use winit::window::Window as PlatformWindow;
 
@@ -26,16 +26,33 @@ const MAX_DT: f32 = 0.1;
 /// Maximum fixed steps per rendered frame; beyond this the backlog is dropped.
 const MAX_FIXED_STEPS: u32 = 5;
 
+/// How the mouse gets captured for camera look.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GrabMode {
+    /// Editor style: hold the right mouse button to look around; the left button stays free
+    /// for selecting things. Esc also releases.
+    #[default]
+    HoldRightButton,
+    /// Game style: a left click captures the mouse until Esc releases it.
+    ClickLeft,
+}
+
 pub struct WindowConfig {
     pub title: String,
     pub logical_size: (f64, f64),
+    pub grab_mode: GrabMode,
     /// Fixed simulation rate in Hz (see `App::fixed_update`).
     pub fixed_hz: f64,
 }
 
 impl Default for WindowConfig {
     fn default() -> Self {
-        Self { title: "Engine".to_owned(), logical_size: (1280.0, 720.0), fixed_hz: 60.0 }
+        Self {
+            title: "Engine".to_owned(),
+            logical_size: (1280.0, 720.0),
+            grab_mode: GrabMode::default(),
+            fixed_hz: 60.0,
+        }
     }
 }
 
@@ -72,6 +89,7 @@ pub trait App {
 
 pub fn run<A: App>(config: WindowConfig, app: A) -> Result<(), winit::error::EventLoopError> {
     let fixed_hz = config.fixed_hz;
+    let grab_mode = config.grab_mode;
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut runner = Runner {
@@ -81,6 +99,7 @@ pub fn run<A: App>(config: WindowConfig, app: A) -> Result<(), winit::error::Eve
         input: Input::default(),
         last_frame: Instant::now(),
         fixed: FixedTimestep::new(fixed_hz, MAX_FIXED_STEPS),
+        grab_mode,
         dropped_seconds: 0.0,
         last_drop_warning: Instant::now(),
     };
@@ -94,6 +113,7 @@ struct Runner<A: App> {
     input: Input,
     last_frame: Instant,
     fixed: FixedTimestep,
+    grab_mode: GrabMode,
     /// Simulation time dropped since the last warning (warnings are limited to 1 per second).
     dropped_seconds: f64,
     last_drop_warning: Instant,
@@ -151,11 +171,19 @@ impl<A: App> ApplicationHandler for Runner<A> {
                 self.input.clear_all();
                 self.set_grab(false);
             }
-            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. }
-                if !captured && !self.input.cursor_grabbed() =>
-            {
-                self.set_grab(true);
-            }
+            WindowEvent::MouseInput { state, button, .. } => match (self.grab_mode, button, state) {
+                (GrabMode::HoldRightButton, MouseButton::Right, ElementState::Pressed) if !captured && !grabbed => {
+                    self.set_grab(true)
+                }
+                // Releases are never captured by the UI, so the grab cannot get stuck.
+                (GrabMode::HoldRightButton, MouseButton::Right, ElementState::Released) if grabbed => {
+                    self.set_grab(false)
+                }
+                (GrabMode::ClickLeft, MouseButton::Left, ElementState::Pressed) if !captured && !grabbed => {
+                    self.set_grab(true)
+                }
+                _ => {}
+            },
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {
                     let pressed = event.state == ElementState::Pressed;

@@ -14,7 +14,8 @@ pub use controls::fly_camera;
 pub mod prelude {
     pub use crate::{fly_camera, run, Engine, Game, GameConfig};
     pub use engine_camera::FlyCamera;
-    pub use engine_platform::{Input, Key};
+    pub use engine_platform::{GrabMode, Input, Key};
+    pub use engine_raycast::{Aabb, Ray};
     pub use engine_render::{Environment, RendererConfig};
     pub use engine_scene::{
         spawn_cube, Entity, PreviousTransform, RenderCube, Transform, World,
@@ -25,7 +26,8 @@ pub mod prelude {
 
 use engine_camera::FlyCamera;
 use engine_render::{Environment, RendererConfig};
-use engine_scene::World;
+use engine_platform::GrabMode;
+use engine_scene::{Entity, World};
 use engine_time::SimControl;
 use glam::Vec3;
 
@@ -54,6 +56,8 @@ pub struct GameConfig {
     pub window_size: (f64, f64),
     /// Fixed simulation rate (see [`Game::fixed_update`]).
     pub fixed_hz: f64,
+    /// How the mouse is captured for camera look (default: hold the right button).
+    pub grab_mode: GrabMode,
     pub renderer: RendererConfig,
 }
 
@@ -63,6 +67,7 @@ impl Default for GameConfig {
             title: "Game".to_owned(),
             window_size: (1280.0, 720.0),
             fixed_hz: 60.0,
+            grab_mode: GrabMode::default(),
             renderer: RendererConfig::default(),
         }
     }
@@ -74,6 +79,8 @@ pub struct Engine {
     pub camera: FlyCamera,
     pub env: Environment,
     pub sim: SimControl,
+    /// Entity picked in the viewport (editor); also settable by game code.
+    pub selected: Option<Entity>,
     /// Set to `true` to close the game after the current frame.
     pub quit: bool,
 }
@@ -85,6 +92,7 @@ impl Engine {
             camera: FlyCamera::new(Vec3::new(0.0, 5.0, 20.0), 0.0, -0.2),
             env: Environment::default(),
             sim: SimControl::default(),
+            selected: None,
             quit: false,
         }
     }
@@ -112,6 +120,7 @@ pub fn run<G: Game>(config: GameConfig, game: G) -> Result<(), Box<dyn std::erro
         title: config.title.clone(),
         logical_size: config.window_size,
         fixed_hz: config.fixed_hz,
+        grab_mode: config.grab_mode,
     };
     engine_platform::run(window, app::EngineApp::new(game, config))?;
     Ok(())

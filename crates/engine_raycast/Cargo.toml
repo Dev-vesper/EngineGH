@@ -1,0 +1,7 @@
+[package]
+name = "engine_raycast"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+glam.workspace = true

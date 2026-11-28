@@ -21,7 +21,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use engine_memory::MemorySampler;
-pub use state::{EditorOutput, InspectorData, SceneOp};
+pub use state::{EditorOutput, InspectorData, SceneOp, SelectRequest};
 pub use stats::FrameStats;
 
 #[derive(Debug)]
@@ -129,6 +129,12 @@ impl Editor {
             WindowEvent::MouseInput { .. } | WindowEvent::MouseWheel { .. } => capture.pointer,
             _ => false,
         }
+    }
+
+    /// Whether the overlay is currently shown (F1).
+    #[inline]
+    pub fn visible(&self) -> bool {
+        self.visible
     }
 
     pub fn update_stats(&mut self, dt: f32) {

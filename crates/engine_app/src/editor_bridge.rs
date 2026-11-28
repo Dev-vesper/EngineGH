@@ -1,6 +1,6 @@
 //! Applies the requests the editor produced during a frame (see `engine_editor::EditorOutput`).
 
-use engine_editor::{EditorOutput, SceneOp};
+use engine_editor::{EditorOutput, SceneOp, SelectRequest};
 use engine_scene::{spawn_cube, PreviousTransform, RenderCube, Transform};
 use glam::Vec3;
 
@@ -28,10 +28,16 @@ impl<G: Game> EngineApp<G> {
         // Scene indices refer to this frame's `entities` (see `EngineApp::render`).
         let world = &mut self.engine.world;
         let entity_at = |i: usize| self.entities.get(i).copied();
+        match out.select {
+            SelectRequest::Keep => {}
+            SelectRequest::Clear => self.engine.selected = None,
+            SelectRequest::Index(i) => self.engine.selected = entity_at(i),
+        }
+        // A scene edit may override the selection: new objects become selected.
         match out.scene {
             SceneOp::None => {}
             SceneOp::Add { model, color } => {
-                spawn_cube(world, Transform::from_matrix(model), RenderCube { color });
+                self.engine.selected = Some(spawn_cube(world, Transform::from_matrix(model), RenderCube { color }));
             }
             SceneOp::Duplicate(i) => {
                 let source = entity_at(i)
@@ -39,12 +45,13 @@ impl<G: Game> EngineApp<G> {
                     .map(|(t, c)| (*t, *c));
                 if let Some((mut transform, cube)) = source {
                     transform.position += Vec3::X; // visible offset from the original
-                    spawn_cube(world, transform, cube);
+                    self.engine.selected = Some(spawn_cube(world, transform, cube));
                 }
             }
             SceneOp::Remove(i) => {
                 if let Some(e) = entity_at(i) {
                     let _ = world.despawn(e);
+                    self.engine.selected = None;
                 }
             }
             SceneOp::Set { index, model, color } => {

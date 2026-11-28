@@ -11,6 +11,8 @@ pub struct InspectorData<'a> {
     pub env: &'a mut Environment,
     pub sim: &'a mut SimControl,
     pub instances: &'a [Instance],
+    /// Selected object as an index into `instances` for this frame.
+    pub selected: Option<usize>,
     pub render: RenderStatus,
 }
 
@@ -25,6 +27,16 @@ pub enum SceneOp {
     Set { index: usize, model: Mat4, color: Vec4 },
 }
 
+/// Change of selection requested by the UI.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SelectRequest {
+    #[default]
+    Keep,
+    Clear,
+    /// Index into this frame's `instances`.
+    Index(usize),
+}
+
 /// Requests produced by the UI during one frame. Apply them after rendering.
 #[derive(Debug, Default)]
 pub struct EditorOutput {
@@ -36,6 +48,7 @@ pub struct EditorOutput {
     pub quit: bool,
     /// At most one scene edit per frame.
     pub scene: SceneOp,
+    pub select: SelectRequest,
 }
 
 pub(crate) struct PanelVisibility {
@@ -64,10 +77,9 @@ impl Default for PanelVisibility {
     }
 }
 
-/// Which instance the scene panel edits, plus its rotation as stable Euler angles
-/// (re-deriving Euler angles from the matrix every frame would make them jump near gimbal lock).
+/// Rotation of the selected object as stable Euler angles (re-deriving them from the matrix
+/// every frame would make them jump near gimbal lock).
 pub(crate) struct SceneSelection {
-    pub index: usize,
     pub euler_deg: [f32; 3],
     pub rotation: Quat,
     pub cached_for: Option<usize>,
@@ -75,7 +87,7 @@ pub(crate) struct SceneSelection {
 
 impl Default for SceneSelection {
     fn default() -> Self {
-        Self { index: 0, euler_deg: [0.0; 3], rotation: Quat::IDENTITY, cached_for: None }
+        Self { euler_deg: [0.0; 3], rotation: Quat::IDENTITY, cached_for: None }
     }
 }
 

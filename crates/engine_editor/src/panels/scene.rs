@@ -4,7 +4,7 @@ use engine_render::Instance;
 use glam::{EulerRot, Mat4, Quat, Vec3, Vec4};
 
 use super::drag_vec3;
-use crate::state::{EditorOutput, SceneOp, SceneSelection};
+use crate::state::{EditorOutput, SceneOp, SceneSelection, SelectRequest};
 
 const EULER: EulerRot = EulerRot::YXZ;
 const MIN_SCALE: f32 = 0.001;
@@ -20,6 +20,7 @@ pub(super) fn draw(
     sel: &mut SceneSelection,
     instances: &[Instance],
     camera: &FlyCamera,
+    selected: Option<usize>,
     out: &mut EditorOutput,
 ) {
     ui.text(format!("Instances: {}", instances.len()));
@@ -30,24 +31,24 @@ pub(super) fn draw(
             color: Vec4::new(0.8, 0.8, 0.8, 1.0),
         };
     }
-    if instances.is_empty() {
+    let Some(index) = selected.filter(|&i| i < instances.len()) else {
+        ui.text_disabled("Left-click an object in the viewport to select it.");
         return;
-    }
+    };
 
-    sel.index = sel.index.min(instances.len() - 1);
-    let mut index = sel.index as i32;
-    if ui.slider_i32("Index", &mut index, 0, instances.len() as i32 - 1) {
-        sel.index = index as usize;
+    let mut slider = index as i32;
+    if ui.slider_i32("Index", &mut slider, 0, instances.len() as i32 - 1) {
+        out.select = SelectRequest::Index(slider as usize);
     }
-    let instance = instances[sel.index];
+    let instance = instances[index];
     let (mut scale, rotation, mut position) = instance.model.to_scale_rotation_translation();
 
     // Re-derive the Euler angles only when the selection or the object changed under us.
-    if sel.cached_for != Some(sel.index) || rotation.dot(sel.rotation).abs() < 0.9999 {
+    if sel.cached_for != Some(index) || rotation.dot(sel.rotation).abs() < 0.9999 {
         let (y, x, z) = rotation.to_euler(EULER);
         sel.euler_deg = [x.to_degrees(), y.to_degrees(), z.to_degrees()];
         sel.rotation = rotation;
-        sel.cached_for = Some(sel.index);
+        sel.cached_for = Some(index);
     }
 
     let mut changed = drag_vec3(ui, "Position", &mut position, 0.05);
@@ -63,7 +64,7 @@ pub(super) fn draw(
 
     if changed {
         out.scene = SceneOp::Set {
-            index: sel.index,
+            index,
             model: Mat4::from_scale_rotation_translation(scale.max(Vec3::splat(MIN_SCALE)), sel.rotation, position),
             color: Vec4::new(rgb[0], rgb[1], rgb[2], instance.color.w),
         };
@@ -71,10 +72,14 @@ pub(super) fn draw(
 
     ui.separator();
     if ui.button("Duplicate") {
-        out.scene = SceneOp::Duplicate(sel.index);
+        out.scene = SceneOp::Duplicate(index);
     }
     ui.same_line();
     if ui.button("Remove") {
-        out.scene = SceneOp::Remove(sel.index);
+        out.scene = SceneOp::Remove(index);
+    }
+    ui.same_line();
+    if ui.button("Deselect") {
+        out.select = SelectRequest::Clear;
     }
 }

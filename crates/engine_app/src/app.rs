@@ -4,6 +4,8 @@ use std::sync::Arc;
 use engine_camera::FlyCamera;
 use engine_platform::{App, Input, PhysicalSize, PlatformWindow, WindowEvent, WindowId};
 #[cfg(feature = "editor")]
+use engine_platform::{ElementState, MouseButton};
+#[cfg(feature = "editor")]
 use engine_render::Environment;
 use engine_render::{Frame, Instance, Renderer, RendererConfig};
 use engine_scene::{extract_instances, snapshot_transforms, Entity};
@@ -29,6 +31,9 @@ pub(crate) struct EngineApp<G: Game> {
     pub(crate) entities: Vec<Entity>,
     #[cfg(feature = "editor")]
     editor: Option<Editor>,
+    /// Last known cursor position in physical pixels (for picking).
+    #[cfg(feature = "editor")]
+    cursor: Option<glam::Vec2>,
 }
 
 impl<G: Game> EngineApp<G> {
@@ -48,6 +53,8 @@ impl<G: Game> EngineApp<G> {
             entities: Vec::new(),
             #[cfg(feature = "editor")]
             editor: None,
+            #[cfg(feature = "editor")]
+            cursor: None,
         }
     }
 }
@@ -83,7 +90,20 @@ impl<G: Game> App for EngineApp<G> {
     fn window_event(&mut self, id: WindowId, event: &WindowEvent, cursor_grabbed: bool) -> bool {
         #[cfg(feature = "editor")]
         if let Some(editor) = self.editor.as_mut() {
-            return editor.handle_event(id, event, cursor_grabbed);
+            let captured = editor.handle_event(id, event, cursor_grabbed);
+            let editor_visible = editor.visible();
+            match event {
+                WindowEvent::CursorMoved { position, .. } => {
+                    self.cursor = Some(glam::Vec2::new(position.x as f32, position.y as f32));
+                }
+                WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. }
+                    if editor_visible && !captured && !cursor_grabbed =>
+                {
+                    self.pick_at_cursor();
+                }
+                _ => {}
+            }
+            return captured;
         }
         let _ = (id, event, cursor_grabbed);
         false
@@ -121,6 +141,12 @@ impl<G: Game> App for EngineApp<G> {
         let alpha = if self.engine.sim.paused { 1.0 } else { alpha };
         extract_instances(&self.engine.world, alpha, &mut self.instances, &mut self.entities);
 
+        // Index of the selected entity in this frame's render data (cleared if it was despawned).
+        let selected = self.engine.selected.and_then(|e| self.entities.iter().position(|&x| x == e));
+        if selected.is_none() {
+            self.engine.selected = None;
+        }
+
         let Some(r) = self.renderer.as_mut() else { return };
         #[cfg(feature = "editor")]
         let status = r.status();
@@ -129,6 +155,7 @@ impl<G: Game> App for EngineApp<G> {
             eye: self.engine.camera.position,
             env: self.engine.env,
             instances: &self.instances,
+            selected: selected.map(|i| i as u32),
         };
 
         #[cfg(feature = "editor")]
@@ -138,6 +165,7 @@ impl<G: Game> App for EngineApp<G> {
                 env: &mut self.engine.env,
                 sim: &mut self.engine.sim,
                 instances: &self.instances,
+                selected,
                 render: status,
             };
             let mut out = EditorOutput::default();
@@ -146,5 +174,17 @@ impl<G: Game> App for EngineApp<G> {
             return;
         }
         r.render(&frame);
+    }
+}
+
+#[cfg(feature = "editor")]
+impl<G: Game> EngineApp<G> {
+    /// Selects the nearest object under the cursor (or clears the selection on empty space).
+    fn pick_at_cursor(&mut self) {
+        let (Some(cursor), Some(renderer)) = (self.cursor, self.renderer.as_ref()) else { return };
+        let (w, h) = renderer.size();
+        let ray = self.engine.camera.screen_ray(cursor, glam::Vec2::new(w as f32, h as f32));
+        let hit = ray.and_then(|ray| engine_raycast::raycast_unit_cubes(&ray, self.instances.iter().map(|i| &i.model)));
+        self.engine.selected = hit.and_then(|h| self.entities.get(h.index).copied());
     }
 }

@@ -8,6 +8,7 @@ glam.workspace = true
 log.workspace = true
 env_logger.workspace = true
 engine_platform.workspace = true
+engine_raycast.workspace = true
 engine_camera.workspace = true
 engine_render.workspace = true
 engine_scene.workspace = true

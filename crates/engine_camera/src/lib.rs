@@ -1,6 +1,7 @@
 //! Free-fly camera. Depends only on `glam`; knows nothing about windowing or GPU.
 
 use glam::camera::rh::{proj::directx, view};
+use engine_raycast::Ray;
 use glam::{Mat4, Vec2, Vec3};
 
 const WORLD_UP: Vec3 = Vec3::Y;
@@ -91,6 +92,13 @@ impl FlyCamera {
     pub fn view_proj(&self, aspect: f32) -> Mat4 {
         self.projection_matrix(aspect) * self.view()
     }
+
+    /// World-space ray through a pixel (`cursor` in pixels, +y down, inside `viewport`).
+    /// Reverse-Z: NDC depth 1.0 is the near plane, 0.5 lies at twice the near distance.
+    pub fn screen_ray(&self, cursor: Vec2, viewport: Vec2) -> Option<Ray> {
+        let inv = self.view_proj(viewport.x / viewport.y).inverse();
+        Ray::from_screen(cursor, viewport, inv, (1.0, 0.5))
+    }
 }
 
 #[cfg(test)]
@@ -143,5 +151,29 @@ mod tests {
         let mut c = FlyCamera::new(Vec3::ZERO, 0.0, 0.0);
         c.translate(Vec3::new(1.0, 0.0, 1.0), 1.0, 1.0);
         assert!((c.position.length() - c.move_speed).abs() < 1e-4);
+    }
+
+    #[test]
+    fn screen_ray_through_centre_is_the_view_direction() {
+        let c = FlyCamera::new(Vec3::new(1.0, 2.0, 3.0), 0.7, -0.3);
+        let r = c.screen_ray(Vec2::new(640.0, 360.0), Vec2::new(1280.0, 720.0)).unwrap();
+        assert!((r.dir - c.forward()).length() < 1e-4);
+        // Starts on the near plane, directly in front of the eye.
+        assert!(((r.origin - c.position).length() - c.projection.near).abs() < 1e-4);
+    }
+
+    #[test]
+    fn screen_ray_edge_angle_matches_the_field_of_view() {
+        let c = FlyCamera::new(Vec3::ZERO, 0.0, 0.0);
+        // Top-centre pixel: half the vertical FOV above the forward axis.
+        let r = c.screen_ray(Vec2::new(640.0, 0.0), Vec2::new(1280.0, 720.0)).unwrap();
+        let angle = r.dir.angle_between(c.forward());
+        assert!((angle - c.projection.fov_y * 0.5).abs() < 1e-3, "angle {angle}");
+        assert!(r.dir.y > 0.0, "pixel row 0 is the top of the screen");
+        // Right edge, vertical centre: horizontal half-FOV is atan(tan(fov/2) * aspect).
+        let r = c.screen_ray(Vec2::new(1280.0, 360.0), Vec2::new(1280.0, 720.0)).unwrap();
+        assert!(r.dir.x > 0.0);
+        let expected = ((c.projection.fov_y * 0.5).tan() * (1280.0 / 720.0)).atan();
+        assert!((r.dir.angle_between(c.forward()) - expected).abs() < 1e-3);
     }
 }

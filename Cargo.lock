@@ -520,6 +520,7 @@ dependencies = [
  "engine_editor",
  "engine_memory",
  "engine_platform",
+ "engine_raycast",
  "engine_render",
  "engine_scene",
  "engine_time",
@@ -532,6 +533,7 @@ dependencies = [
 name = "engine_camera"
 version = "0.1.0"
 dependencies = [
+ "engine_raycast",
  "glam",
 ]
 
@@ -563,6 +565,13 @@ dependencies = [
  "glam",
  "log",
  "winit",
+]
+
+[[package]]
+name = "engine_raycast"
+version = "0.1.0"
+dependencies = [
+ "glam",
 ]
 
 [[package]]

@@ -9,7 +9,7 @@ mod renderer;
 mod scene;
 mod simulation;
 
-use dear_imgui_rs::{Condition, Ui};
+use dear_imgui_rs::{Condition, Ui, WindowFlags};
 use engine_memory::MemoryStats;
 use glam::Vec3;
 
@@ -27,7 +27,8 @@ pub(crate) struct PanelContext<'a> {
     pub adapter: &'a str,
 }
 
-/// A titled, closable, auto-height window placed once on first use.
+/// A titled, closable window placed once on first use that always fits its content (panels
+/// change height, e.g. when an object gets selected).
 fn panel(ui: &Ui, title: &str, open: &mut bool, pos: [f32; 2], body: impl FnOnce()) {
     if !*open {
         return;
@@ -36,6 +37,7 @@ fn panel(ui: &Ui, title: &str, open: &mut bool, pos: [f32; 2], body: impl FnOnce
         .opened(open)
         .position(pos, Condition::FirstUseEver)
         .size([PANEL_WIDTH, 0.0], Condition::FirstUseEver)
+        .flags(WindowFlags::ALWAYS_AUTO_RESIZE)
         .build(body);
 }
 
@@ -87,7 +89,7 @@ pub(crate) fn draw_all(
         environment::draw(ui, data.env, out)
     });
     panel(ui, "Scene", &mut p.scene, [right, top + 395.0], || {
-        scene::draw(ui, &mut state.selection, data.instances, data.camera, out)
+        scene::draw(ui, &mut state.selection, data.instances, data.camera, data.selected, out)
     });
     panel(ui, "Controls", &mut state.panels.help, [left, top], || help::draw(ui));
 }

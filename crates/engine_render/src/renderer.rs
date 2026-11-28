@@ -18,6 +18,8 @@ struct CameraUniform {
     eye: Vec4,
     light_dir: Vec4,
     fog: Vec4,
+    /// x: index of the highlighted instance (`u32::MAX` = none).
+    selection: [u32; 4],
 }
 
 /// Scene-wide lighting and atmosphere.
@@ -42,6 +44,8 @@ pub struct Frame<'a> {
     pub eye: Vec3,
     pub env: Environment,
     pub instances: &'a [Instance],
+    /// Instance drawn with a selection tint.
+    pub selected: Option<u32>,
 }
 
 /// Snapshot of renderer settings for UIs. `Copy`, so it can be taken before a frame is rendered.
@@ -240,6 +244,7 @@ impl Renderer {
             eye: frame.eye.extend(1.0),
             light_dir: env.light_dir.normalize_or_zero().extend(0.0),
             fog: env.sky.extend(env.fog_density),
+            selection: [frame.selected.unwrap_or(u32::MAX), 0, 0, 0],
         };
         self.gpu.queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
         self.instances.write(&self.gpu.device, &self.gpu.queue, bytemuck::cast_slice(frame.instances));

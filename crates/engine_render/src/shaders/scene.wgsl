@@ -3,6 +3,7 @@ struct Camera {
     eye: vec4<f32>,       // xyz: world position
     light_dir: vec4<f32>, // xyz: normalised direction TOWARDS the light
     fog: vec4<f32>,       // rgb: fog colour (linear), a: density
+    selection: vec4<u32>, // x: highlighted instance index (0xFFFFFFFF = none)
 };
 @group(0) @binding(0) var<uniform> camera: Camera;
 
@@ -15,6 +16,7 @@ fn apply_fog(color: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
 // ---------------------------------------------------------------- meshes
 
 struct MeshIn {
+    @builtin(instance_index) instance: u32,
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) m0: vec4<f32>,
@@ -48,6 +50,10 @@ fn vs_mesh(in: MeshIn) -> MeshOut {
     out.world_pos = world.xyz;
     out.normal = n;
     out.color = in.color;
+    if (in.instance == camera.selection.x) {
+        // Selection tint; keeps the surface shading.
+        out.color = vec4<f32>(mix(in.color.rgb, vec3<f32>(1.0, 0.55, 0.08), 0.6), in.color.a);
+    }
     return out;
 }
 

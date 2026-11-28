@@ -196,6 +196,7 @@ impl App for BenchApp {
             eye: self.camera.position,
             env: self.env,
             instances: &self.scene.instances,
+            selected: None,
         };
 
         let t0 = Instant::now();
